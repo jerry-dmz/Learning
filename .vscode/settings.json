@@ -1,5 +1,5 @@
 {
-    "workbench.iconTheme": "vs-minimal",
+    "workbench.iconTheme": "material-icon-theme",
     "terminal.explorerKind": "external",
     "terminal.integrated.copyOnSelection": true,
     "terminal.integrated.cursorStyle": "line",
