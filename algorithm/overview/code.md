@@ -633,61 +633,21 @@ MapReduce框架只是一个任务调度器，底层依赖GFS来存储数据，�
 
 其实算法、数据结构、编程模式，这些都是解决问题的一些惯用套路，只有对这些套路足够熟悉，才能从根本上提高学习的效率，才能接触更多更有趣的玩意儿
 
------------------------------------《算法通关40讲》-----------------------------------
-
-有效的学习数据结构与算法：
-
-《异类-不一样的成功启示录》
-
-chunk it up    
-
-deliberate practice
-
-feedback
-
-斐波那契数列的时间复杂度
-
-LeetCode
-
-https://www.bigocheatsheet.com/
 
 
-优先队列的实现机制：Heap（Binary，Binomial，Fibonacii）、Binary Serach Tree
+跟着《数据结构和算法》的脉络，结合java，先大概的将能实现的数据结构和算法先实现一遍，然后leetcode刷题。
 
-Heap的多种实现机制：
+没思路，或者比较烦时，看看公司代码，公司代码看烦了，再看算法
 
-优先队列的应用：https://www.cnblogs.com/wmyskxz/p/9301021.html
-
-
-Hash Function,如何解决hash冲突
-
-HashMap vs TreeMap
-
-HashSet vs TreeSet
-
-(HashSet vs binary-search-tree)
-
-树：LinkedList就是特殊化的Tree，Tree就是特殊化的Graph
-
-二叉树
-
-二叉搜索树：左子树节点<根节点<右子树节点、左右子树分别为二叉搜索树
-
-98  235   236
-
-二叉树遍历：程序中使用较少
-
-递归和分治：
+等算法成为习惯之后，专心攻克操作系统、编译原理、js原理、css
 
 
 
-17.堆和堆排序：
+**算法训练时的脉络，以及其中遇到的问题：**
 
-​	堆是一个完全二叉树
 
-​	堆中每一个节点的值都必须大于等于（或小于等于）其子树中每个节点的值
 
-​	堆化
+
 
 
 

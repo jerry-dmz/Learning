@@ -192,86 +192,118 @@ url传递的参数可能会产生歧义性的数据，如：不在ASCII范围内
 * ASCII码：直接编码
 * 非ASCII码：先UTF编码，在US-ASCII编码
 
-2.connection 头部关于长连接与短链接
-3.X -fowarded-to 传递原始client ip 
-x -real -ip 非规范的
-via 头部，max -forwards
+对于URI合法字符，编码与不编码是等价的
 
-4.请求上下文头部user -agent
-refer 
-file data url不会被加入
-当前http 来源https 不会被加入
-用途 统计分析缓存防盗链
-allow 允许执行那些方法
-allow-ranges是否允许range 请求
-5.内容协商
-主动内容协商
-accept  accept-language accept-encoding 
-对应content -type 等
-响应式内容协商
-返回300或406
-6常见的协商要素
-质量因子
-i18n
-l10n
-7.包体
-请求和响应都可以携带包体
-某些消息不能携带包体
-如head 方法
+* 保留字符：： /   ?  #  [    ]   @       !   $   &   '    (   )   *   +   ,    ;    =
+* 非保留字符：字母  %41~5A    %61~7A  ;  数字  30%~39%；  -（%2D）; .(%2E) ; _(%5f) ; 
 
-定长包体content -length 10进制表示字节数
+**6.http解决了什么问题**
 
-不定长包体transfer-encoding:chunk
-chunk 的格式
-trailer 头部
-content -disposition 
-8.form 表单的提交格式
-enc-type 
-默认 multi/partform -data 
-9.http range 规范，断点续传
-允许服务器基于响应只发送部分包体到客户端，客户端自动将多个包体组装成一个完整包体
-支持断点续传，支持多线程下载，支持视频实时拖动播放
-if -range 
-206partial content content-range 
-416range 范围不对，200不支持range 请求
-多重range  multipart/range 
+解决了什么问题，首先要看www信息交互面对了什么需求：
 
+* 低门槛
 
-10.cookie保存在客户端，服务端生成，可以存储在磁盘，也可以存储在内存
-多个set-cookie 格式，有cookie string 描述这个cookie 属性的
+* 可扩展性,巨大的用户群体，意味着快速迭代的需求，因此其扩展性需要非常好
 
-cookie 的设计缺陷
-第三方cookie 浏览器允许保存不安全域的cookie 比如广告图片
+* 分布式系统下的超媒体，各种media会在网络中传递，不局限于文本
 
-11.资源uri 和资源表述之间的关系
-基于请求内容进行协商
-条件请求:客户端携带条件信息，服务端进行条件判断并返回对应的资源表述
-场景:
-使缓存更新更有效率
-断点续传验证
-对多个进行修改的资源进行同步
-条件请求验证器:
-E -tag  last-modified 
-Authtencation不能被代理服务器缓存
-私有缓存和共享缓存
-cache control
-缓存新鲜度计算时间
-12.重定向
-Location 头部和重定向响应码
+* Internet规模
 
-永久重定向
-303   308
-临时重定向
-302  303  307
-特殊重定向 
-300协商
-304 
-重定向的几种区别
-1ok 123456ok
+  * 环境复杂、负载不可预测
 
-复杂请求与简单请求跨域的区别
-cors
+  * 规模庞大，且应用的规模会根据不同种场景进行伸缩，因此要求客户端不能保存所有服务器信息，服务器不能保持多个请求间的状态信息
 
-access-allow-origin
-Tunnel 使用http 协议传递非http 格式数据
-connect 方法
+    否则，进行扩容、缩容的时候，需要维持这些状态信息
+
+  * 新老组件并存，各种不同版本的协议之间会在一个时间段内共存，并且进行彼此间的通信
+
+**7.chrome devtools network面板**
+
+过滤器中对属性过滤的几种常见用法
+
+请求列表中initiator几种值：Parser(HTML解析器发起了请求)、重定向、脚本、Other（一些其他进程或动作请求发起请求，例如地址栏输入地址）
+
+domain、has-response-header(包含指定响应标头的资源)、is:running（查找websocket资源）、is:from-cache(缓存读出的资源)、larger-than
+
+method、mime-type、mixed-content(**混合内容资源？？？**)、scheme（scheme:http）、status-code、set-cookie-domain、set-cookie-name、set-cookie-value
+
+多属性通过空格实现**AND**操作
+
+<img src="..\images\7.png" alt="image-20210829214943107" style="zoom: 80%;" />
+
+**8.http请求行**
+
+request-line = method **SP** request-target **SP** HTTP-version **CRLF**
+
+request-target = origin-form **/** absolute-form **/** authority **/** asterisk-form 
+
+第一种最常见，表示origin-server的资源路径
+
+第二种仅用于向正向代理proxy发起请求时（正向代理针对于客户端的请求，对客户端进行授权、过滤；反向代理则针对于服务器端的请求，如负载均衡）
+
+第三种仅用于connect方法
+
+第四种仅用于options方法
+
+* 常见方法：
+
+  GET，获取信息，大量的性能优化都针对get方法，幂等
+
+  POST，常用于提交HTML FORM表单、新增资源等
+
+  HEAD，类似get，但服务器不发送body，用于获取head元数据，幂等
+
+  PUT,更新资源，带条件时是幂等
+
+  DELETE,删除资源，幂等
+
+  CONNECT，建立tunnel隧道
+
+  OPTIONS：显示服务器对访问资源支持的方法，幂等
+
+  TRACE，回显服务器收到的请求，用于定位问题，有风险
+
+**9.http响应行**
+
+status-line = HTTP-version  **SP**  status-code  **SP**  reason-phrase  **CRLF**
+
+**响应码分类：**
+
+1xx：
+
+* 100 continue 上传大文件前使用
+* 101 switch protocols 协议升级使用，客户端请求携带Upgrade：头部触发
+* 102 processing，表示服务器已经收到并正在处理请求，但无响应可用，防止客户端超时
+
+2xx：
+
+* 200 ok，成功返回响应
+* 201 created，有新资源在服务器端被创建
+* 202 accepted，服务器接收并开始处理请求，但请求并未处理完成。
+* 203 Non-Authoritative information：当代理服务器修改了origin server的原始响应包体，代理服务器修改200为203，203可被缓存
+* 204 no content：成功执行了请求且不携带包体，同时指明客户端无需更新当前页面视图
+* 205 Reset content:成功执行了请求且不携带包体，同时指明客户端无需更新当前页面视图
+* 206 partial content：使用range协议时返回部分响应内容
+* 207 multi-status：在webdav协议中以xml形式返回多个资源的状态
+* 208 already reported：**？？？？**
+
+3xx：重定向使用location指向的资源或者缓存中的资源，规定重定向次数不应超过5次
+
+* 301 moved permanently，资源永久性的重定位到另一个资源
+* 302 found，资源临时的重定向到另一个url
+* 303 see other，重定向到其他资源，常用于POST/PUT等方法的响应
+* 304 not modified，当客户端拥有可能过期的缓存时，会携带缓存表示的etag、时间等信息询问服务器缓存是否仍可复用，304告诉可以复用
+* 307，类似302；308，类似301，只是要求请求方法前后需一致
+
+4xx:
+
+* 400 bad request,服务器认为客户端出现了错误
+* 401 Unauthorized，用户认证信息确实或不正确，导致服务器无法处理请求
+* 407 proxy authentication required，对需要经由代理的请求，认证信息并未通过代理服务器的验证
+* 403 forbidden，服务器理解请求的含义，但没有权限执行此请求
+* 404 not found，没有找到对应的资源
+* 410 gone
+
+5xx
+
+**10.长连接、短连接**
