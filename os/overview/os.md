@@ -631,25 +631,258 @@ __visible const sys_call_ptr_t ia32_sys_call_table[__NR_syscall_compat_max+1] = 
 
 ###### **4.进程管理**
 
-《程序员的自我修养-链接、装载和库》
+《程序员的自我修养-链接、装载和库》---->resolved 已大概了解,二进制能玩儿的东西还有很多
 
+c语言下的多线程:<Programming with POSIX Threads>
 
+在linux里,无论是进程,还是线程,在内核里统一都叫Task,由一个统一的结构task_struct进行管理
 
+<<浪潮之巅>>
 
+```c
+struct task_struct{
+    //任何一个进程,如果只有主进程,pid tgid 都是自己,group_header指向自己;如果一个进程创建了其他线程,线程有自己的pid,tgid就是线程的
+    //pid,group_header执行进程的主线程
+    pid_t pid;
+    pid_t tgid;
+    struct task_struct* group_header;
+    
+    //signal_struct里还有一个struct sigpending shared_pending,这个是线程组共享的;下面的sighand是本任务的.
+    struct signal_struct* signal;
+    //正在通过信号函数进行处理
+    struct sighand_struct* sighand;
+ 	//被阻塞,暂不处理
+    sigset_t blocked;
+    sigset_t real_blocked;
+    sigset saved_sigmask;
+    //尚等待待处理
+    struct sigpending pending;
+    //信号处理函数默认使用用户态的函数栈,当然也可以开辟新的栈专门用于信号处理,sas_ss_xxx这三个变量就起这个作用
+    unsigned long sas_ss_sp;
+    size_t sas_ss_size;
+    unsigned int sas_ss_flags;
+    
+    //state定义在include/linux/sched.h头文件,state通过bitset设置的
+     volatile long state;
+    int exit_state;
+    //PF_EXITING表示正在退出;PF_VCPU表示进程运行在虚拟CPU;PF_FORKNOEXEC表示fork完了,还没有exec
+    unsigned int flags;
+    
+    //是否在运行队列上
+    int on_rq;
+    //优先级
+    int prio;
+    int static_prio;
+    int normal_prio;
+    unsigned int rt_priority;
+    //调度器类
+    const struct sched_class* sched_class;
+    //调度实体
+    struct shced_entity se;
+    struct sched_rt_entiy rt;
+    struct shced_dl_entity dl;
+    //调度策略
+    unsigned int policy;
+    可以使用那些xpu
+    int nr_cpus_allowed;
+    cpumask_t cpus_allowed;
+    struct sched_info sched_info;
+    
+    u64 utime;//用户态消耗的cpu时间
+    u64 stime;//内核态消耗的cpu时间
+    unsigned long nvcsw;//自愿上下文切换计数
+    unsigned long nivcsw;//非自愿上下文切换计数
+    u64 start_time;//进程启动时间,不包含睡眠时间
+    u64 real_start_time;//进程时间,包含睡眠时间
+    
+    //进程亲缘关系TODO:这种声明是什么意思
+    struct task_struct __rcu *real_parent;
+    struct task_struct __rcu *parent;
+    struct list_head children;
+    struct list_haed sibling;
+    
+    //进程权限,大部分都是用户和用户所属的用户组信息uid gid SUID SGID EUID EGID FSUID FSGID  capabilities
+    //谁能操作此进程
+    const struct cred __rcu *read_cred;
+    //此进程可以操作谁
+    const struct cred __rcu *cred;
+    
+    //内存管理
+    struct mm_struct *mm;
+    struct mm_struct *active_mm;
+    
+    //文件与文件系统
+    //Filesystem information
+    struct fs_struct *fs;
+    //Open file information
+    struct files_struct *files;
+    
+    struct thread_info thread_info;
+    //内核栈
+    void *stack;
+}
+```
 
+![image-20220112230956774](C:\Users\dmzc\Desktop\Learing\os\images\os\image-20220112230956774.png)
 
+![image-20220112235605391](C:\Users\dmzc\Desktop\Learing\os\images\os\image-20220112235605391.png)
 
+Linux给每个task都分配了内核栈,arch/x86/include/asm/page_32_types.h,arch/x86/include/asm/page_64_types.h
 
+![image-20220113000214212](C:\Users\dmzc\Desktop\Learing\os\images\os\image-20220113000214212.png)
 
+这段空间最低位置,是一个thread_info结构,与体系结构相关的,都放在thread_info里
 
+```c
+union thread_union{
+    #ifndef CONFIG_THREAD_INFO_IN_TASK
+    	struct thread_info thread_info;
+    #endif
+    unsigned long stack[THREAD_SIZE/sizeof(long)]
+}
+```
 
+在内核栈的最高地址端,存放pt_regs,保存用户态寄存器值
 
+通过内核栈中thread_info找到task_struct
 
+```C
+struct thread_info{
+	struct task_struct *task;
+    __uu32 flags;
+    __uu32 status;
+    __uu32 cpu;
+    mm_sgement_t addr_limit;
+    unsigned int sig_on_uaccess_error:1;
+    unsigned intuaccess_err:1;
+}
+```
 
+常用current_thread_info()->task获取task_struct
 
+新的机制里,每个CPU运行的task_struct不通过thread_info获取,而是直接放到了Per CPU
 
+Per CPU就是为每个CPU构造的一个变量副本,这样多个CPU各自操作自己的副本,当前进程的变量current_task就被声明为Per CPU变量
 
+Per CPU变量使用方式:
 
+* arch/x86/include/asm/current.h中声明:DECALARE_PER_CPU(struct task_struct *,current_task);
+* arch/x86/kernel/cpu/common.c中定义:DEFINE_PER_CPU(struct task_struct *,current_task)=&init_task
+
+系统刚初始化时,current_task都指向了init_task   当某个CPU上的进程进行切换时,current_task被修改为将要切换到的目标进程.例如,进程切换函数__switch_to就会改变current_task
+
+要获取当前的运行中的task_struct时,就需要调用this_cpu_read_stable进行读取
+
+![img](C:\Users\dmzc\Desktop\Learing\os\images\os\82ba663aad4f6bd946d48424196e515c.jpeg)
+
+**实时调度策略**
+
+SCHED_FIFO:高优先级的进程可以抢占低优先级的进程,相同优先级的进程,遵循先来先得的规则
+
+SCHED_RR:采用时间片,相同优先级的任务当用完时间片会被放到队列尾部,以保证公平性,高优先级的任务可以抢占低优先级的任务
+
+SCHED_DEADLINE:当产生一个调度点时,DL调度器总是选择其deadline距离当前时间点最近的哪个任务,并调度它执行
+
+**普通调用策略**
+
+SCHED_NORMAL:普通进程
+
+SCHED_BATCH:后台进程,几乎不需要和前端进行交互
+
+SCHED_IDLE:特别空闲时才跑的进程
+
+task_struct->sched_class封装了调度策略的执行逻辑
+
+**完全公平调度算法**
+
+在linux里,实现了一个基于CFS的调度算法:
+
+CFS为每个进程安排一个虚拟运行时间vruntime.如果一个进程在运行,随着时间的增长,进程的vruntime将不断增大,没有得到执行的进程vruntime不变.
+
+vruntime=delte_exec*NICE_0_LOAD/权重,选取下一个进程运行的时候,还是按照最小的vruntime来的.
+
+**调度队列与调度实体**
+
+需要一个数据结构来对vruntime排序,为了兼顾频繁的查询和更新,使用红黑树,红黑树的一个节点应该包括vruntime,称为调度实体
+
+完全公平算法调度实体sched_entity
+
+```c
+struct sched_entity{
+    struct load_weight load;
+    struct rb_node run_node;
+    struct list_head group_node;
+	unsigned int on_rq;
+    u64 exec_start;
+    u64 sum_exec_runtime;
+    u64 vruntime;
+    u64 prev_sum_exec_runtime;
+    u64 nr_migrations;
+    struct shced_statistics statistics;
+}
+```
+
+**每个CPU都有自己的struct rq结构,其用于描述在此CPU上运行的所有进程,其包括一个实时进程队列rt_rq和一个CFS运行队列cfs_rq,在调度时,调度器首先会先去实时进程队列找是否有实时进程需要运行,如果没有才会去CFS运行队列找是否有进程需要运行.**
+
+```c
+struct rq{
+    raw_spinlock_t lock;
+    unsigned int nr_running;
+    unsigned long cpu_load[CPU_LOAD_IDX_MAX];
+    struct load_weight load;
+    unsigned long nr_load_updates;
+    u64 nr_switches;
+    struct cfs_rq csf;
+    struct rt_rq rt;
+    struct dl_rq dl;
+    struct task_struct *curr,*idle,*stop;
+}
+```
+
+对于普通进程公平队列cfs_rq
+
+```c
+struct cfs_rq{
+    struct load_wieght load;
+    unsigned int nr_running,h_nr_running;
+    u64 exec_clock;
+    u64 min_vruntime;
+    #ifndef CONFIG_64BIT
+    	u64 min_vruntime_copy
+    #endif
+      struct rb_root tasks_timeline;
+      struct rb_node *rb_leftmost;
+      struct shced_entity *curr,*next,*last,*skip;
+} 
+```
+
+```c++
+struct sched_class {
+    const struct sched_calss * next;
+    void(*enqueue_task) (struct rq *rq,struct task_struct *p,int flags);
+    void(*dequeue_task) (struct rq *rq,struct task_struct *p,int flags);
+    void(*yeild_task) (struct rq *rq);
+    bool(*yeild_to_task) (struct rq *rq,struct task_struct *p,bool preempt);
+    void (*check_preempt_curr) (struct rq *rq,struct task_struct *p,int flags);
+    struct task_struct * (*pick_next_task) (struct rq *rq,struct task_struct *prev,struct rq_flags *rf);
+    void (*put_prev_task) (struct rq *rq,struct task_struct *p);
+    
+    //修改调度策略
+    void (*set_curr_task) (struct rq *rq);
+    //每次周期性时钟到,此函数被调用,可能触发调度
+    void (*task_tick) (struct rq *rq,struct task_struct *p,int queued);
+    void (*task_fork) (struct task_struct *p);
+    void (*task_dead) (struct task_struct *p);
+    
+    void (*switched_from) (struct rq *this_rq,struct task_struct *task);
+    void (*switched_to) (struct rq *this_rq,struct task_struct *task);
+    void (*prio_changed) (struct rq *this_rq,struct task_struct *task,int oldprio);
+    unsigned int(*get_rr_interval) (struct rq *rq,struct task_struct *task);
+    void (*update_curr) (struct rq *rq);
+}
+```
+
+此结构定义了很多方法,用于在队列上操作任务
 
 
 
