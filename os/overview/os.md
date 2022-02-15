@@ -1,4 +1,4 @@
-## 《趣谈linux》
+## ，《趣谈linux》
 
 #### 大纲
 
@@ -157,7 +157,7 @@ Glibc一个单独的API可能调用多个系统调用，多个API也可能对应
 
 开放的运营环境
 
-<img src="C:\Users\dmzc\Desktop\Learing\os\images\1.webp" alt="img" style="zoom: 33%;" />
+<img src="..\images\1.webp" alt="img" style="zoom: 33%;" />
 
 CPU包含3个部分：
 
@@ -536,6 +536,8 @@ syscall_return_via_sysret:
   USERGS_SYSRET64
 ```
 
+
+
 ```
 
 __visible void do_syscall_64(struct pt_regs *regs)
@@ -723,9 +725,9 @@ struct task_struct{
 }
 ```
 
-![image-20220112230956774](C:\Users\dmzc\Desktop\Learing\os\images\os\image-20220112230956774.png)
+![image-20220112230956774](..\images\os\image-20220112230956774.png)
 
-![image-20220112235605391](C:\Users\dmzc\Desktop\Learing\os\images\os\image-20220112235605391.png)
+![image-20220112235605391](..\images\os\image-20220112235605391.png)
 
 Linux给每个task都分配了内核栈,arch/x86/include/asm/page_32_types.h,arch/x86/include/asm/page_64_types.h
 
@@ -871,7 +873,7 @@ struct sched_class {
     void (*set_curr_task) (struct rq *rq);
     //每次周期性时钟到,此函数被调用,可能触发调度
     void (*task_tick) (struct rq *rq,struct task_struct *p,int queued);
-    void (*task_fork) (struct task_struct *p);
+    void (*task_fork) (struct  *p);
     void (*task_dead) (struct task_struct *p);
     
     void (*switched_from) (struct rq *this_rq,struct task_struct *task);
@@ -883,6 +885,1914 @@ struct sched_class {
 ```
 
 此结构定义了很多方法,用于在队列上操作任务
+
+每个CPU都有一个队列rq，这个队列里面包含多个子队列，例如rt_rq和cfs_rq，不同队列有不同的实现方式，cfs_rq就是用红黑树实现的。
+
+当CPU需要找下一个任务执行时，会按照优先级依次调用调度类，不同的调度类操作不同的队列
+
+**主动调度**
+
+计算主要是CPU和内存的合作；网络和存储则多是和外部设备的合作；操作外部设备时，往往需要让出CPU，此时就会选择调用schedule函数
+
+```c++
+asmlinkage __visible void __sched schedule(void){
+  struct task_struct *tsk = current;
+  sched_submit_work(tsk);
+  do{
+    preempt_disable();
+    __schedule(false);
+    sched_preempt_enable_no_resched();
+  }while(need_resched());
+}
+```
+
+主要逻辑在__schedule函数
+
+```c++
+static void __sched notrace __schedule(bool preempt){
+  struct task_struct *prev,*next;
+  unsigned long *switch_count;
+  struct rq_flags rf;
+  struct rq *rq;
+  int cpu;
+  
+  cpu=smp_processor_id();
+  rq=cpu_rq();
+  prev=rq->curr;
+  
+  next=pick_next_task(rq,prev,&rf);
+  clear_tsk_need_resched(prev);
+  clear_preempt_need_resched();
+}
+```
+
+```c++
+static inline struct task_struct * pick_next_task(struct rq *rq,struct task_struct *prev,struct rq_flags *rf,){
+  const struct sched_class *class;
+  struct task_struct *p;
+  if(likely((prev->sched_class==&idle_sched_class||
+           prev->sched_class==&fair_sched_class)&&
+    	rq->nr_running==rq->cfs.h_nr_running){
+    	p=fair_sched_class.pick_next_task(rq,prev,rf);
+    	if(unlikely(p==RETRY_TASK))
+          goto again;
+    	if(unlikely(!p))
+      		p=idle_sched_class.pick_next_task(rq,prev,rf);
+         return p；
+  }
+  again:
+     for_each_class(class){
+       p=class->pick_next_task(rq,prev,rf);
+       if(p){
+         if(unlikely(p==RETRY_TASK))
+           goto again;
+         return p;
+       }
+     }
+}
+```
+
+fair_sched_class.pick_next_task调用pick_next_task_fair
+
+取出当前的正在运行的任务curr，如果依然是可运行状态，则调用update_curr更新vruntime。
+
+接着pick_next_entity从红黑树里，去取最左边的一个节点。如果发现继任和前任不一样，说明有一个需要运行的进程，就需要更新红黑树，前面前任的已经更新过，只需要调用put_prev_entity将其放回红黑树，然后调用set_next_entity将继任者设置为当前任务。
+
+当选出的继任和前任不同，就要进行上下文切换,继任者进程正式进入运行
+
+```c++
+if(likely(prev!=next)){
+  rq->nr_switches++;
+  rq->curr=next;
+  ++*switch_count;
+  
+  rq=context_switch(rq,prev,next,&rf);
+}
+```
+
+**进程下上下切换**
+
+切换进程空间（虚拟内存）；切换寄存器和CPU上下文
+
+```c++
+static __always_inline struct rq *context_switch(struct *rq,struct task_struct *prev,struct task_struct *next,struct rq_flags *rf){
+	struct mm_struct *mm,*oldmm;
+  	mm=next->mm;
+  	oldmm=prev->active_mm;
+  	switch_mm_irqs_off(oldmm,mm,next);
+  	switch_to(prev,next,prev);
+  	barrier();
+  return finish_task_switch(prev);
+}
+```
+
+```assembly
+ENTRY(__switch_to_asm)
+	.......
+	movl %esp,TASK_threadsp(%eax)
+	movl TASK_threadsp(%edx),%esp
+	.......
+	jmp __switch_to
+END(__switch_asm_to)
+```
+
+
+
+x86体系结构中，提供一种以硬件的方式进行进程切换的模式，对于每个进程，**x86希望在内存里维护一个TSS**（Task State Segment,任务状态段）结构。这里有所有的寄存器。
+
+还有一个特殊的**寄存器TR(Task Register,任务寄存器)，指向某个进程的TSS。**更改TR的值，将会触发硬件保存CPU所有寄存器的值到当前进程的TSS，然后从**新进程的TSS**中读出所有寄存值，加载到CPU对应的寄存器中。
+
+但是这样做进程切换时，都会全量切换和保存
+
+linux操作系统的解决方法：cpu_init给每一个CPU关联一个TSS，然后将TR指向这个TSS，然后在操作系统的运行过程中，TR就不切换了，永远指向这个TSS。
+
+```c++
+void cpu_init(void){
+  int cpu = smp_processor_id();
+  struct task_struct *curr = current;
+  struct tss_struct *t = &per_cpu(cpu_tss,cpu);
+  load_sp0(t,thread);
+  set_tss_desc(cpu,t);
+  load_TR_desc(); 
+}
+struct tss_struct{
+  struct x86_hw_tss x86_tss;
+  unsigned long io_bitmap[IO_BITMAP_LONGS + 1];
+}
+```
+
+task_struct中有一个thread_struct变量，这里保留了要进程切换的时候需要修改的值****
+
+**进程A切换到进程B的过程：**
+
+进程A在用户态写一个文件，通过系统调用陷入内核，这个切换的过程，用户态的指令寄存器是保存在内核栈的pt_regs里。
+
+到了内核态，就开始沿着写文件的逻辑一步一步执行，发现需要等待，就调用__schedule函数，此时，进程A在内核态的指令指针是指向 _schedule。
+
+_schedule经过层层调用，到达了context_switch的最后三条指令（其中barrier语句是一个编译器指令，用于保证switch_to和finish_task_switch的执行顺序，不会因为编译阶段优化而改变）
+
+当进程A在内核里执行switch_to的时候，内核态的指令指针也是指向这一行的。但是在switch_to里面，将寄存器和栈都切换成了进程B的，唯一没有变的就是指令指针寄存器。当switch_to返回的时候，指令指针寄存器指向了下一条语句finish_task_switch。
+
+此时的finish_task_switch已经不是进程A的finish_task_switch了，而且进程B的finish_task_switch。
+
+**之前B进程被别人切换的时候，也是调用__schedule,也是switch_to,被切换到其他进程，所以，B进程当年的下一条指令也是finish_task_swicth**
+
+**抢占式调度**
+
+一个进程执行时间太长了，切换到另一个进程。计算机中有一个时钟，会过一段时间触发一次时间中断，通知操作系统。时钟中断函数会调用scheduler_tick
+
+```c++
+void scheduler_tick(void){
+    int cpu=smp_processor_id();
+    struct rq *rq=cpu_rq(cpu);
+    struct task_struct *curr=rq->curr;
+    ......
+    curr->sched_class->task_tick(rq,curr,0);
+    cpu_load_update_active(rq);
+    calc_global_load_tick(rq);
+}
+```
+
+根据当前进程的task_struct,找到对应的调度实体sched_entity和cfs_rq队列，调用entity_tick。
+
+```c++
+static void entity_tick(struct cfs_rq *cfs_rq,struct sched_entity *curr,int queued){
+    update_curr(cfs_rq);
+    update_load_avg(curr,UPDATE_TG);
+    update_cfs_shares(curr);
+    if(cfs_rq->nr_running>1)
+        check_preempt_tick(cfs_rq,curr);
+}
+//在entity_tick里，会更新当前进程的vruntime，然后调用check_preempt_tick(检查是否是时候被抢占了)
+static void check_preempt_tick(struct cfs_rq *cfs_rq,struct sched_entity *curr){
+    unsigned long ideal_runtime,delta_exec;
+    struct sched_entity *se;
+    s64 delta;
+  	//一个调度周期中，该进程的实际运行时间  
+    //TODO:抢占式调度真正发生的时机，这里是怎么计算的
+    ideal_runtime = sched_slice(cfs_rq,curr);
+    delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
+    if(delta_exec > ideal_runtime){
+        resched_curr(rq_of(cfs_rq));
+        return;
+    }
+    ......
+    se = __pick_first_entity(cfs_rq);
+    delta = curr->vruntime - se->vruntime;
+    if(delta < 0){
+        resched_curr(rq_of(cfs_rq));
+    }
+}
+```
+
+发现当前进程应该被抢占，不能直接把它踢下来，而是把它标记为应该被抢占。调用resched_curr，他会set_tsk_need_resched,标记进程应该被抢占。TIF_NEED_RESCHED。
+
+另外一个可能被抢占的场景是**当一个进程被唤醒的时候**
+
+**真正的抢占时机**
+
+用户态的抢占时机，从系统调用返回的那个时刻，是一个抢占的时机。从中断返回的时刻，也是一个被抢占的时机。
+
+**exit_to_usermode_loop,判断如果被打了_TIF_NEED_RESCHED,就调用schedule进行调度**
+
+对内核态的执行中，被抢占的时机一般发生在preempt_enable()中
+
+在内核态的执行中，有的操作是不能被中断的，所以在执行这些操作之前，总是先调用preempt_disable()关闭抢占，当再次打开的时候，就是一次内核态代码被抢占的机会。
+
+**进程创建**
+
+fork调用，sys_fork,调用_do_fork
+
+dup_task_struct中主要做了下面几件事：
+
+* alloc_task_struct_node分配一个task_struct结构；
+* 调用alloc_thread_stack_node创建内核栈，这里面调用__vmalloc_node_range分配一个连续的THREAD_SIZE的内存空间，赋值给task_struct的void *stack成员变量；
+* 调用arch_dup_task_struct(struct task_struct *dst,struct task_struct *src),将task_struct进行复制，其实就是调用memcpy；
+* 调用setup_thread_task设置thread_info
+
+copy_creds主要做了下面几件事：
+
+* 调用prepare_creds,准备一个新的struct cred *new(从内存分配一个cred结构，然后调用memcpy复制一份父进程的cred)；然后将新进程的两个权限都指向新的cred
+
+copy_process重新设置进程运行的统计量
+
+copy_process开始设置调度相关的变量 retval=sched_fork(clone_flags,p)
+
+​      调用_sched_fork,将on_rq设为0，初始化sched_entity,将里面的exec_start、sum_exec_runtime、prev_sum_exec_runtime、vruntime都设为0。设置进程的状态、设置进程优先级、设置调度类。调用调度类的task_for函数，对于CFS来讲，先调用update_curr,对于当前的进程进行统计量更新，然后把子进程和父进程的vrnutime设成一样，最后调用place_entity,初始化sched_entity。这里有一个变量sysctl_sched_child_runs_first,可以设置父进程和子进程谁先运行。
+
+接下来，copy_process开始初始化与文件和文件系统相关的变量
+
+​	retval=copy_files(clone_flags);
+
+​	retval=copy_fs(clone_flags,p);
+
+copy_files用于复制一个进程打开的文件信息，files_struct
+
+copy_fs用于复制一个进程的目录信息,fs_struct来维护。一个进程有自己的根目录和根文件系统root，也有当前目录pwd和当前目录的文件系统，都在fs_struct里维护。
+
+copy_process开始初始化与信号相关的变量
+
+​	init_sigpending(&p-<pending);
+
+​	retval = copy_sighand(clone_flags,p);
+
+​	retval = copy_signal(clone_flags,p);
+
+copy_process接下来复制进程内存空间
+
+​	retval = copy_mm(clone_flags,p)
+
+接下来，copy_process开始分配pid，设置tid，group_leader,并且建立进程之间的亲缘关系
+
+复制完毕后，就要**唤醒新进程**
+
+```c++
+void wake_up_new_task(struct task_struct *p){
+    struct rq_flags rf;
+    struct rq *rq;
+    ......
+    p->state = TASK_RUNNING;
+   .......
+   activate_task(rq,p,ENQUEUE_NOCLOCK);
+   p->on_rq = TASK_ON_RQ_QUEUED;
+   trace_sched_wakeup_new(p);
+   check_preempt_curr(rq,p,WF_FORK);
+}
+```
+
+**创建线程**
+
+线程不是一个完全由内核实现的机制，由内核态和用户态合作完成的。pthread_create不是一个系统调用，是Glibc库的一个函数。
+
+首先处理线程的属性参数。
+
+接下来，就像在内核里一样，每一个进程或线程都有一个task_struct结构，在用户态也有一个用于维护线程的结构，就是pthread
+
+凡是涉及函数的调用，都要使用栈，每个线程都有自己的栈，接下来就是创建线程栈
+
+* 为了防止栈越界，会在栈的末尾会有一块guardsize
+* 线程栈是在进程的堆里面创建的，是应该有缓存的
+* 如果没有缓存里没有，就需要调用__mmap创建一块新的
+* 线程栈也是自顶向下生长的，pthread结构也是放到栈空间里的，在栈底位置。
+* 计算出guard内存位置，调用setup_stack_prot设置这块内存
+* 接下来，开始填充pthread这个结构里的成员变量stackblock、stackblock_size、guardsize、specfic。这里s'pecific是用于存放Thread Specific Data的，也即属于线程的全局变量；
+* 将这个线程栈放到stack_used链表中，其实管理线程栈总共两个链表，一个是stack_used,也就是这个栈正被使用；另一个是stack_cache,一旦线程结束，先缓存起来，不释放
+
+真正创建线程的函数
+
+```c++
+static int create_thread(struct pthread *pd,const struct pthread_attr *attr,bool *stopped_start,STACK_VARIABLES_PARMS,bool *thread_ran){
+    const int clone_flags=(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SYSVSEM | CLONE_SIGHAND | CLONE_THREAD  | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD | 0);
+  ARCH_CLONE(&start_thread,STACK_VARIABLES_ARGS,clone_flags,pd,&pd->tid,tp,&pd->tid);
+   *thread_ran=true;
+}
+```
+
+ARCH_CLONE,其实调用的是__clone,其中就会调用 _do_fork，其中复杂标志的设定，影响一下步骤：
+
+* 对于copy_files、copy_fs、copy_sighand、copy_mm,原来是调用dup_fd复制一个files_struct,现在将原来的files_struct引用计数加一。
+* 对于copy_signal,原来是创建一个新的signal_struct,现在因为CLONE_THREAD，直接返回，而因为有了这个标识，使得亲缘关系有了一定的变化
+
+clone在内核的调用完毕，要返回系统调用，回到用户态
+
+根据__clone的第一个参数，回到用户态调用通用的start_thread，这是所有线程在用户态的统一入口。
+
+```c++
+#define STRAT_THREAD_DEFN
+	static int __attribute__((noreturn)) start_thread (void *arg)
+START_THREAD_DEFN
+    {
+        struct pthread *pd	= START_THREAD_SELF;
+        /*Run the code the user provided**/
+        THRAD_SETMEM(pd,result,pd->start_routine(pd->arg));
+        /**
+         * Call destructors for the thread_local TLS variables
+         * Run the destructor for the thread-local data.
+         */
+        __nptl_deallocate_tsd();
+        if(__glibc_unlikely(atomic_decrement_and_test(&__nptl_nthreads)))
+            exit(0);
+        __free_tcb();
+        __exit_thread();
+    }
+```
+
+**内存管理**
+
+物理内存的管理、虚拟地址的管理、虚拟地址和物理地址如何映射
+
+从最低位排起，先是**Text Segment、Data Segment和BBS Segment**；接下来是**堆**，堆是往高地址增长的；接下来的区域**Memory Mapping Segment**，这块可以用来把文件映射进内存用，如果二进制的执行文件**依赖于某个动态链接库**；**栈地址段**，主线程的函数调用的函数栈。
+
+到了内核，无论是哪个进程进来的，看到的都是同一个内核空间，看到的都是同一个进程列表
+
+内核的代码访问内核的数据结构，大部分的情况下都是使用虚拟地址的，虽然内核代码权限很大，但是能够使用的虚拟地址范围也只能在内核空间，也即内核代码访问内核数据结构。
+
+[现代操作系统内存管理到底是分段还是分页，段寄存器还有用吗？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/409754117)
+
+进入32位时代后，有了些变化：
+
+* 32位时代，段寄存器增加了两个：**fs、gs**，这两个寄存器有特殊用途
+* 段寄存器存放的不在是段基地址，而是**段选择子**
+
+段寄存器存放是一个号码，是一个表格中**表项的号码**。这个表，有可能是**全局描述表GDT**，也有可能是**局部描述表LDT**。
+
+到底是哪个表？是由段选择子从低到高的第三位来决定的，如果这一位是0，则是**GDT**，否则就是**LDT**。
+
+这两个表的表项叫做段描述符，描述了一个内存段的信息。CPU单独添置了两个寄存器，用来指向两个表，分别是gdtr和ldtr
+
+寻址时，CPU首先根据段寄存器中的号码，通过gdtr或ldtr来到GDT/LDT中取出对应的段描述符，然后在取出这个段的基地址，最后再结合段内的偏移，完成内存寻址。
+
+**无论是分段还是分页，这都是x86架构CPU的内存管理机制，这俩是同时存在的（保护模式下），并不是让操作系统二选一**
+
+​       **进程的代码段、数据段、栈段、扩展段这四个段全部重合了，而是整个进程地址空间共计4GB成为一个段**
+
+Intel 64指令手册
+
+In 64-bit mode:CS,DS,ES,SS are threated as if each segment base is 0,regardless of the value of the associated segment descriptor base.
+
+```c++
+#define GDT_ENTRY_INIT(flags, base, limit) { { { \
+    .a = ((limit) & 0xffff) | (((base) & 0xffff) << 16), \
+    .b = (((base) & 0xff0000) >> 16) | (((flags) & 0xf0ff) << 8) | \
+      ((limit) & 0xf0000) | ((base) & 0xff000000), \
+  } } }
+
+DEFINE_PER_CPU_PAGE_ALIGNED(struct gdt_page,gdt_page)={.gdt={
+ #ifdef CONFIG_X86_64
+    [GDT_ENTRY_KERNEL32_CS] = GDT_ENTRY_INIT(0xc09b,0,0xfffff),
+    [GDT_ENTRY_KERNEL_CS] = GDT_ENTRY_INIT(0xa09b,0,0xfffff),
+    [GDT_ENTRY_KERNEL_DS] = GDT_ENTRY_INIT(0xc093,0,0xfffff),
+    [GDT_ENTRY_DEFAULT_USER32_CS] = GDT_ENTRY_INIT(0xc0fb,0,0xfffff),
+    [GDT_ENTRY_DEFAULT_USER_DS] = GDT_ENTRY_INIT(0xc0f3,0,0xfffff),
+    [GDT_ENTRY_DEFAULT_USER_CS] = GDT_ENTRY_INIT(0xa0fb,0,0xfffff),
+ #else
+    [GDT_ENTRY_KERNEL_CS] = GDT_ENTRY_INIT(0xc09a,0,0xfffff),
+    [GDT_ENTRY_KERNEL_DS] = GDT_ENTRY_INIT(0xc092,0,0xfffff),
+    [GDT_ENTRY_KERNEL_DEFAULT_USER_CS] = GDT_ENTRY_INIT(0xc0fa,0,0xfffff),
+    [GDT_ENTRY_KERNEL_DEFAULT_USER_DS] = GDT_ENTRY_INIT(0xc0f2,0,0xfffff),
+    .......
+ #endif
+}};
+EXPORT_PER_CPU_SYMBOL_GPL(gdt_page)
+```
+
+//TODO:GDT、LDT表项结构？？？？？
+
+定义了内核代码段、内核数据段、用户代码段和用户数据段，还会定义以下4个段选择子
+
+```c++
+#define __KERNEL_CS (GDT_ENTRY_KERNEL_CS*8)
+#define __KERNEL_DS (GDT_ENTRY_KERNEL_DS*8)
+#define __USER_DS (GDT_ENTRY_DEFAULT_USER_DS*8 + 3)
+#define __USER_CS (GDT_ENTRY_DEFAULT_USER_CS*8 + 3)
+```
+
+Linux下，所有段的起始地址都是一样的，为0。在Linux操作系统中，并没有使用到分段的全部功能，分段可以做权限审核。
+
+Linux倾向于**分页**的内存管理方式
+
+前10位定位到页目录项中的一项。将这一项对应的页表取出来共1k项，在用中间10位定位到页表中一项，将这一项对应的存放数据的页取出来，在用12位定位到页中的具体位置访问数据。
+
+只给进程分配一个数据页，如果只使用页表，也需要4M的内存；如果使用页目录，页目录需要1K个全部分配，占用4K，但里面只有一项使用。到了页表项，只需要分配能够管理哪个数据页的页表项页就可以了。
+
+对于64位系统，就变成了4级目录
+
+
+
+current->mm->task_size = TASK_SIZE
+
+对于32位系统，最大能寻址4G，用户态虚拟地址空间3G，内核态1G
+
+对于64位系统，虚拟地址只用了48位，用户态空间和内核空间都是128T，之间隔着很大的空隙，以此来进行隔离。
+
+mm_struct定义了虚拟内存区域的统计信息和位置
+
+```c++
+//用于内存映射的起始地址，一般情况，从高地址到低地址增长的
+unsigned long mmap_base;
+//总共映射的页的数目
+unsigned long total_vm;
+//被锁定不能被换出
+unsigned long locked_vm;
+//不能换出，也不能移动
+unsigned long pinned_vm;
+//存放数据的页的数目
+unsigned long data_vm;
+//存放可执行文件的页的数目
+unsigned long exec_vm;
+//栈所占的页的数目
+unsigned long stack_vm;
+//分别代表可执行代码、已初始化数据的开始和结束位置
+unsigned long start_code,end_code,start_data,end_data;
+//堆的起始、结束位置，栈的起始位置
+unsigned long start_brk,brk,start_stack;
+//参数列表和环境变量的位置
+unsigned long arg_start,arg_end,env_start,env_end;
+```
+
+task_struct有以下结构：
+
+```c++
+//单链表，用于将这些区域串起来
+struct vm_area_struct *mmap;/** list of VMAs */
+//红黑树节点，便于快速查找一个内存区域
+struct rb_root mm_rb;
+```
+
+```c++
+struct vm_area_struct{
+    //该区域在用户空间中起始和结束地址
+    unsigned long vm_start;
+    unsigned long vm_end;
+    //将这个区域串到链表
+    struct vm_area_struct *vm_next,*vm_prev;
+    //将这个区域放到红黑树
+    struct rb_node vm_rb;
+    struct mm_struct *vm_mm;
+    //对这个内存区域可以做的操作的定义
+    const struct vm_operations_struct *vm_ops;
+    //虚拟内存区域可以映射到物理内存，也可以映射到文件，映射到文件就需要vm_file指定
+    struct list_head anon_vma_chain;
+    struct anon_vma *anon_vma;
+    struct file *vm_file;
+    void * vm_private_data;
+} __randomize_layout
+```
+
+```c++
+static int load_elf_binary(struct linux_binprm *bprm){
+    ......
+ 	  //设置内存映射区mmap_base
+      setup_new_exec(bprm);
+    ......
+      //设置栈的vm_area_struct
+      retval = setup_arg_pages(bprm,randomize_stack_top(STACK_TOP),executable_stack);
+      //将ELF文件中的代码部分映射到内存中来
+      error = elf_map(bprm->file,load_bias + vaddr,elf_ppnt,elf_prot,elf_flags,total_size);
+      //设置堆的vm_area_struct
+      retval = set_brk(elf_bss,elf_brk,bss_prot);
+      //将依赖的so映射到内存中的内存映射区域
+      elf_entry = load_elf_interp(&loc->interp_elf_ex,
+                                  interpreter,
+                                  &interp_map_addr,
+                                  load_bias,
+                                  interp_elf_phdata);
+    current->mm->end_code = end_code;
+    current->mm->start_code = start_code;
+    current->mm->start_data = start_data;
+    current->mm->end_data = end_data;
+    current->mm->start_stack = bprm->p;
+}
+```
+
+映射完毕后，一下情况会修改：
+
+* 函数的调用，涉及到函数栈的改变
+* 通过malloc申请一个堆内的空间，底层要么执行brk，要么执行mmap
+
+brk系统调用实现入口是sys_brk函数
+
+```c++
+SYSCALL_DEFINE1(brk,unsigned long,brk){
+    unsigned long retval;
+    unsigned long newbrk,oldbrk;
+    struct mm_struct *mm = current->mm;
+    struct vm_area_struct *next;
+    //将原来的堆顶和现在的堆顶，都按照页对齐地址
+    newbrk = PAGE_ALIGN(brk);
+    oldbrk = PAGE_ALIGN(mm->brk);
+    //如果对齐后的相同，说明增加的很少，不需要另外分配页
+    if(oldbrk == newbrk)
+        goto set_brk;
+    //如果新堆顶小于就堆顶，则是释放内存，至少释放了一页，调用do_munmap将这一页的内存映射去掉
+    if(brk <= mm->brk){
+        if(!do_munmap(mm,newbrk,oldbrk-newbrk,&uf))
+            goto set_brk
+        goto out;
+    }
+    //堆要扩大，找到原堆顶所在的vm_area_struct的下一个vm_area_struct，看当前的堆顶和下一个vm_area_struct之间还能不能分配	一个完整的页
+    next = find_vma(mm,oldbrk);
+ 	//如果能分配一个完整的页，则调用do_brk进一步分配堆空间
+    if(next && newbrk + PAGE_SIZE > vm_start_gap(next))
+        goto out;
+    if(do_brk(oldbrk,newbrk-oldbrk,&uf) < 0)
+        goto out;
+    set_brk:
+    	mm->brk = brk;
+    	return brk;
+    out:
+    	retval = mm->brk;
+    	return retval;
+}
+```
+
+内核态布局
+
+![image-20220130000413003](os.assets/image-20220130000413003.png)
+
+**直接映射区**：就是这一块空间是连续的，和物理内存是非常简单的映射关系
+
+__pa(vaddr)返回与虚拟地址vaddr相关的物理地址
+
+__va(paddr)计算出对应于物理地址paddr的虚拟地址
+
+对于直接映射区，系统启动时，物理内存的前1M已经被占用了，从1M开始加载内核代码段，然后就是内核的全局变量、BSS等，具体内存布局可以查看/proc/iomem
+
+在内核运行过程中，如果碰到系统调用创建进程，会创建task_struct这样的实例，内核的进程管理代码会将实例创建在3G至3G+896M的虚拟空间中，当然能也会被放在物理内存里面的前面896M，相应的页表也会被创建。
+
+内核栈也被分配在896M的空间
+
+* VMALLOC_START到VMALLOC_END之间称为内核动态映射空间，也即内核像用户进程一样malloc申请内存
+* PKMAP_BASE到FIXADDR_START的空间称为持久内核映射。使用alloc_pages，在物理内存的高端内存得到struct page结构，可以调用kmap将其映射到这个区域
+* FIXADDR_START到FIXADDR_TOP的空间，称为固定映射区域，主要用于满足特殊需求
+
+最后一个区域可以通过kmap_atomic实现临时内核映射。把文件内容写入物理内存，需要内核来处理，只好通过kmap_atomic做一个临时映射，写入物理内存完毕后，在kunmap_atomic解映射即可。
+
+![image-20220130004835043](os.assets/image-20220130004835043.png)
+
+
+
+**物理内存的组织方式**
+
+平坦内存模型：物理地址是连续的，页也是连续的。每个页有一个结构struct page
+
+这种模式下，CPU会有多个，在总线的一侧，所有的内存条组成一大片内存，在总线的另一侧，所有的CPU访问都要过总线，而且距离都是一样的，这种模式称为**SMP**（对称多处理器）
+
+为了提高性能和可扩展性，有了一种更高级的模式，**NUMA**（Non-uniform memory access）,非一致内存访问。
+
+这种模式下，内存不再是一整块，每个CPU和内存在一起，称为一个NUMA节点。但是，本地内存不足的情况下，每个CPU都可以去另外的NUMA节点申请内存，这时访问延时就会比较长。
+
+内存被分成了多个节点，每个节点再被分成一个个页面。由于页需要全局唯一定位，页还是需要有全局唯一的页号的。但是由于物理内存不连续，页号就不在连续，内存模型就变成了非连续内存模型。
+
+NUMA往往是非连续内存模型，而非连续内存模型不一定就是NUMA
+
+**稀疏内存模型** TODO:
+
+```c++
+typedef struct pglist_data{
+    
+    struct zone node_zones[MAX_NR_ZONES];
+   	//备用节点和它的内存区域的情况
+    struct zonelist node_zonelists[MAX_ZONELISTS];
+    //当前节点的区域的数量
+    int nr_zones;
+    //节点的struct page数组，用于描述这个节点里的所有的页
+    struct page *node_mem_map;
+    //这个节点的起始页号
+    unsigned long node_start_pfn;
+    //这个节点中包含不连续的物理内存地址的页面数
+    unsigned long node_present_pages;
+    //真正可用的物理页面的数目
+    unsigned long node_spanned_pages;
+    //节点id
+    int node_id;
+}pg_data_t;
+```
+
+每一个节点分成一个个区域，放在数组node_zones里，zone的定义：
+
+```c++
+enum zone_type{
+    #ifdef CONFIG_ZONE_DMA
+    	//用作DMA
+    	ZONE_DMA,
+    #endif
+   	//对于64位，有DMA、DMA32两个
+    #ifdef CONFIG_ZONE_DMA32
+    	ZONE_DMA32,
+    #endif
+    	//直接映射区
+  		ZONE_NORMAL,
+    #ifdef CONFIG_HIGHMEM
+    	//高端内存区
+    	ZONE_HIGHMEM,
+    #endif
+    	//可移动区域，通过将物理内存划分为可移动分配区域和不可移动分配区域来避免内存碎片
+        ZONE_MOVABLE,
+    	__MAX_NR_ZONES
+ }
+```
+
+```c++
+struct zone{
+ struct pglist_data *zone_pgdat;
+ //用于区分冷热页
+ struct per_cpu_pageset __percpu *pageset;
+ unsigned long zone_start_pfn;
+ //这个zone被伙伴系统管理的所有的page数目
+ unsigned long managed_pages = present_pages - reserved_pages;
+ unsigned long spanned_pages = zone_end_pfn - zone_start_pfn;
+ //这个zone在物理内存中真实存在的所有page数目
+ unsigned long present_pages = spanned_pages - absent_pages;
+ 
+ const char *name;
+ struct free_area free_area[MAX_ORDER];
+ unsigned long flags;
+ spinlock_t lock;
+} ____cacheline_internodealigned_in_
+```
+
+页的数据结构struct page,里面有很多union，同一块内存根据情况保存不同类型数据，是因为一个物理页面使用模式有多种。
+
+##### 第一种模式
+
+要用就用一整页。这一整页的内存，或者**直接和虚拟地址空间建立映射关系**，称为匿名页；或者用于**关联一个文件**，然后再和虚拟地址空间建立映射关系（称为内存映射文件）。
+
+如果是这种模式，使用到union中以下变量：
+
+* struct address_space *mapping,用于内存映射，如果是匿名页，最低位为1；如果是映射文件，最低位为0；
+* pgoff_t index是在映射区的偏移量；
+* atomic_t mapcount,每个进程都有自己的页表，这里指多少个页表项指向这个页
+* struct list_head lru,表示这一页应该在一个链表上
+* compound相关的变量用于复合页，就是将物理上连续的两个或多个页看成一个独立的大页
+
+##### 第二种模式
+
+仅需分配小块内存，为了满足小内存块的需求，Linux系统采用了**slab  allocator**的技术，用于分配称为slab的一小块内存。基本原理是从内存管理模块申请一整块页，然后划分成多个小块的存储池，用复杂的队列来维护这些小块的状态（被分配了 / 被放回池子 / 应该被回收）
+
+如果某一页是用于分割成一小块一小块的内存进行分配的使用模式，则会使用union中以下变量：
+
+* s_mem 已经分配了正在使用的slab的第一个对象
+* freelist 池子中的空闲对象
+* rcu_head 需要释放的列表
+
+要分配比较大的内存，如分配页级别的，可以使用伙伴系统
+
+把所有空闲页分组为11个页块链表，每个块链表分别包含很多个大小的页块，有1、2、4、8、16、32、64、128、256、512和1024个连续页的页块。最大可以申请1024个页，对应4MB大小。每个页块的第一个页的物理地址是该页块大小的整数倍。
+
+![image-20220130183058453](os.assets/image-20220130183058453.png)
+
+
+
+
+
+struct zone有以下定义：struct free_area free_area[MAX_ORDER]
+
+```c++
+static inline struct page *alloc_pages(gfp_t gfp_mask,unsigned int order){
+    return alloc_pages_current(gfp_mask,order);
+}
+/**
+ *alloc_pages_current - Allocate pages
+ *@gfp
+ *		//用于分配一个页映射到用户进程的虚拟地址空间，并且希望直接被内核或者硬件访问，主要用于一个用户进程希望通过内存映射的方式
+ *		//，访问某些硬件的缓存
+ *		%GFP_USER user allocation
+ *		//用于内核分配页，主要ZONE_NORMAL区域，也即直接映射区
+ *		%GFP_KERNEL kernel allocation
+ *		//分配高端内存区域的内存
+ *		%GFP_HIGHMEM highmem allocation
+ *		%GFP_FS don't call back into a file system
+ *		%GFP_ATOMIC don't sleep
+ *@order：Power of two of allocation size in pages.0 is a single page.
+ *
+ *	Allocate a page from the kernel page pool.When not in interrupt context and apply then current process
+ * 	NUMA policy.Returns NULL when no page can be allocated.
+ */
+struct page *alloc_pages_current(gfp_t gfp,unsigned order){
+    struct mempolicy *pol=&default_policy;
+    struct page *page;
+ 	//伙伴系统的核心方法
+    page = __alloc_pages_nodemask(gfp,order,
+                                 policy_node(gfp,pol,numa_node_id()),
+                                  policy_nodemask(gfp,pol));
+    return page;
+}
+```
+
+```c++
+//每一个zone，都有伙伴系统维护的各种大小的队列，rmqueue----就是找到合适大小的队列，把页面取下来
+static struct page * get_page_from_freelist(gfp_t gfp_mask,unsigned int order,int alloc_flags,const struct alloc_context *ac){
+    for_next_zone_zonelist_nodemask(zone,z,ac->zonelist,ac->high_zoneidx,ac->nodemask){
+        struct page *page;
+        page = rmqueue(ac->preferred_zoneref->zone,zone,order,gfp_mask,alloc_flags,ac->migratetype);
+    }
+}
+rmqueue->__rmqueue->rmqueue_smallest
+    
+static inline struct page *__rmqueue_smallest(struct zone *zone,unsigned int order,int migratetype){
+    unsigned int current_order;
+    struct free_area * free_area;
+    struct page * page;
+    for(current_order = order;current_order < MAX_ORDER,++current_order){
+        area = &(zone->free_area[current_order]);
+        page = list_first_entry_or_null(&area->free_list[migratetype],struct page,lru);
+        if(!page)
+            continue;
+        list_del(&page->lru);
+        rmv_page_order(page);
+        area->nr_free--;
+        //TODO:此处的逻辑？？？
+        expand(zone,page,order,current_order,area,migratetype);
+        set_pcppage_migratetype(page,migratetype);
+        return page
+    }
+    return NULL;
+}
+```
+
+```c++
+static struct kmem_cache *task_struct_cachep;
+//task_struct缓存区域
+task_struct_cachep = kmem_cache_create("task_struct",
+                                      arch_task_struct_size,align,
+                                      SLAB_PANIC | SLAB_NOTRACK | SLAB_ACCOUNT,NULL);
+
+static inline struct task_struct *alloc_task_struct_node(int node){
+    //从缓存区域取task_struct
+    return kmem_cache_alloc_node(task_struct_cachep,GFP_KERNEL,node);
+}
+
+static inline void free_task_struct(struct task_struct *tsk){
+    //将task_struct放回缓存区	
+    kmem_cache_free(task_struct_cachep,tsk);
+}
+
+//对于缓存来讲，其实就是分配了连续几页的大内存块，然后根据缓存对象的大小，切成小内存块
+struct kmem_cache{
+    struct kmem_cache_cpu __percpu *cpu_slab;
+    unsigned long flags;
+    unsigned long min_partial;
+    //包含这个指针的大小
+    int size;
+    //纯对象的大小
+    int object_size;
+    //把下一个空闲对象的指针存放在这一项里的偏移量
+    int offset;
+    #ifdef CONFIG_SLUB_CPU_PARTIAL
+    	int cpu_partial;
+    #endif
+    //order,就是2的order次方个页面的，objects就是能够存放的缓存对象的数量
+    struct kmem_cache_order_objects oo;
+    struct kmem_cache_order_objects max;
+    struct kmem_cache_order_objects min;
+    gfp_t allocflags;
+    int refcount;
+    void (*ctor)(void *);
+    const char *name;
+    //双向链表，task_struct、mm_struct、fs_struct的缓存放到链表，LIST_HEAD(slab_caches)
+    struct list_head list;
+    struct kmem_cache_node *node[MAX_NUMNODES];
+}
+```
+
+kmem_cache_cpu和kmem_cache_node,它们都是每个NUMA节点上有一个
+
+分配缓存块时，要分两种路径，**fast path**和**slow path**。kmem_cache_cpu是快速通道，kmem_cache_node是普通通道。每次分配内存时，先从kmem_cache_cpu进行分配，如果kmem_cache_cpu没有空闲块，就到kmem_cache_node中进行分配，如果还是没有空闲的块，才去伙伴系统分配新的页。
+
+```c++
+struct kmem_cache_cpu{
+    //指向大内存块里面第一个空闲的项（会有指针指向下一个空闲的项，最终所有空闲的项会形成一个链表）
+    void **freelist;
+    unsigned long tid;
+    //指向大内存块的第一个页，缓存块就是里面分配。
+    struct page *page;
+    #ifdef CONFIG_SLUB_CPU_PARTIAL
+    	//也是的也是大内存块的第一个页（它里面部分被分配出去了，部分是空的。这是一个备用列表，当page满了，就从这里找）
+    	struct page *partial;
+    #endif
+}
+
+struct kmem_cache_node{
+    spinlock_t list_lock;
+    #ifdef CONFIG_SLUB
+    	unsigned long nr_partial;
+    	//这个链表里存放的是部分空闲的内存块。这是kmem_cache_cpu里面的partial的备用列表，如果哪里没有，就到这里来找。
+    	struct list_head partial;
+    #endif
+}
+```
+
+分配过程：
+
+kmem_cache_alloc_node会调用slab_alloc_node
+
+```c++
+/**
+ *	Inlined fastpath so that allocation functions (kmalloc,kmem_cache_alloc)
+ *  have the fastpath folded into their functions.So no function call overhead 
+ *  for requests that can be satisfied on the fastpath.
+ *
+ *	The fastpath works by first checking if the lockless freelist can be used.
+ * 	if not then __slab_alloc is called for slow processing.
+ *  
+ *	Otherise we can simply pick the next object from the lockless free list.
+ */
+static __always_inline void *slab_alloc_node(struct kmem_cache *s,gfp_t gfpflags,int node,unsigned long addr){
+    void *object;
+    struct kmem_cache_cpu *c;
+    struct page *page;
+    unsigned tid;
+    //快速通道，取出cpu_slab也即kmem_cache_cpu的freelist,这就是第一个空闲的项
+    tid = this_cpu_read(s->cpu_slab->tid);
+    c = raw_cpu_ptr(s->cpu_slab);
+    object = c->freelist;
+    page = c->page;
+    if(unlikely(!object || !node_match(page,node))){
+        //进入普通通道
+        object = __slab_alloc(s,gfpflags,node,addr,c);
+        stat(s,ALLOC_SLOWPATH)
+    }
+    return object;
+}
+
+static void *___slab_alloc(struct kmem_cache *s,gfp_t gfpflags,int node,unsigned long addr,struct kmem_cache_cpu *c){
+    void *freellist;
+    struct page *page;
+    .......
+    redo:
+    .......
+    //must check again c->freelist in case of cpu migration or IRQ
+  	freelist = c->freelist;  
+    if(freelist)
+        goto load_freelist;
+    freelist = get_freelist(s,page);
+    
+    if(!freelist){
+        c->page = NULL;
+        stat(s,DEACTIVATE_BYPASS);
+        goto new_slab;
+    }
+    load_freelist:
+    	c->freelist = get_freepointer(s,freelist);
+    	c->tid = next_tid(c->tid);
+    	return freelist;
+    new_slab:
+    	//先去kmem_cache_cpu的partial找，如果partial不为空，就将kmem_cache_cpu的page，也就是快速通道的那一大块内存
+    	//替换为partial里的大块内存，然后redo
+    	if(slub_percpu_partial(c)){
+            page = c->page = slub_percpu_partial(c);
+            slub_set_percpu_partial(c,page);
+            stat(s,CPU_PARTIAL_ALLOC);
+            goto redo;
+        }
+    //如果还没有，就new_slab_objects
+    freelist = new_slab_objects(s,gfpflags,node,&c);
+    return freelist;
+} 
+
+static inline void *new_slab_objects(struct kmem_cache *s,gfp_t flags,int node,struct kmem_cache_cpu **pc){
+    void *freelist;
+    struct kmem_cache_cpu *c = *pc;
+    struct page *page;
+    //根据node_id 找到对应的kmem_cache_node，然后调用get_partial_node开始在这个节点进行分配
+    freelist = get_partial(s,flags,node,c);
+    
+    if(freelist)
+        return freelist;
+    //如果当前kmem_cache_node也没有空闲内存，则调用new_slab进行页面分配
+    page = new_slab(s,flags,node);
+    if(page){
+        c = raw_cpu_ptr(s->cpu_slab);
+        if(c->page)
+            flush_slab();
+        freelist = page->freelist;
+        page->freelist = NULL;
+        stat(s,ALLOC_SLAB);
+        c->page = page;
+        *pc =  c;
+    }else{
+        freelist = NULL;
+    }
+    return freelist;
+}
+
+//从当前kmem_cache_node，调用get_partial_node,在这个节点进行分配，如果这个节点没有，就需要调用new_slab进行分配
+static void *get_partial_node(struct kmem_cache *s,struct kmem_cache_node *n,struct kmem_cache_cpu *c,gfp_t flags){
+    struct page *page,*page2;
+    void *object = NULL;
+    int available = 0;
+    int objects;
+    .......
+    list_for_each_safe(page,page2,&n->partial,lru){
+        void *t;
+        t = acquire_slab(s,n,page,object == NULL,&objects);
+        if(!t)
+            break;
+        available += objects;
+        if(!object){
+            c->page = page;
+            stat(s,ALLOC_FROM_PARTIAL);
+            object = t;
+        }else{
+            put_cpu_partial(s,page,0);
+            stat(s,CPU_PARTIAL_NODE);
+        }
+        if(!kmem_cache_has_cpu_partial(s) || available > slub_cpu_partial(s) / 2)
+            break;
+    }
+    return object;
+}
+
+static struct page *allocate_slab(struct kmem_cache *s,gfp_t flags,int node){
+    struct page *page;
+    struct kmem_cache_order_objects oo =  s->oo;
+    gfp_t alloc_gfp;
+    void *start,*p;	
+    int idx,order;
+    bool shuffle;
+    flags &=gfp_allowed_mask;
+    
+    page = alloc_slab_page(s,alloc_gfp,node,oo);
+    if(unlikely(!page)){
+        oo = s->min;
+        alloc_gfp = flags;
+        /**
+         * Allocation may have failed due to fragmentation.
+         * Try a lower order alloc if possible.
+         */
+        page = alloc_slab_page(s,alloc_gfp,node,oo);
+        if(unlikefly(!page))
+            goto out;
+        stat(s,ORDER_FALLBACk);
+    }
+    return page;
+}
+```
+
+**页面换出**
+
+触发页面换出的情况：
+
+* get_page_from_freelist->node_reclaim->shrink_node，页面换出也是以内存节点为单位的
+
+* 内核线程kswapd，这个内核线程，在初始化的时候就被创建
+
+  balance_pgdat->kswapd_shrink_node->shrink_node,也是以内存节点为单位的
+
+```c++
+/**
+* The backgroundd pageout daemon,started as a kernel thread from the init process
+*
+* This basically trickles out pages so that we have some free memory available even if
+* there is no other activity that frees anything up.This is needed for things like routing
+* etc,where we otherwise might have all activity going on in asynchronous contexts that cannot 
+* page things out.
+*
+* If there are applications that are active memory-allocators(most normal use),this basically
+* shouldn'tmatter.
+*/
+static int kswapd(void *p){
+    unsigned int alloc_order,reclaim_order;
+    unsigned int classzone_idx = MAX_NR_ZONES - 1;
+    pg_data_t *pgdat = (pa_data_t*)p;
+    struct task_struct *tsk = current;
+    for( ; ; ){
+        kswapd_try_to_sleep(pgdat,alloc_order,reclaim_order,classzone_idx);
+        reclaim_order = balance_pgdat(pgdat,alloc_order,classzone_idx);
+    }
+}
+```
+
+以上两种场景都是调用shrink_node
+
+```c++
+/**
+ * This is a basic per-node page freer.Used by both kswapd and direct reclaim.
+ */
+static void shrink_node_memcg(struct pglist_data *pgdat,struct mem_cgroup *memcg,struct scan_control *sc,unsigned long *lru_pages){
+ unsigned long nr[NR_LRU_LISTS];
+ enum lru_list lru;
+ while(nr[LRU_INACTIVE_ANON] || nr[LRU_ACTIVE_FILE] || nr[LRU_INACTIVE_FILE]){
+     unsigned long nr_anon,nr_file,percentage;
+     unsigned long nr_scanned;
+     for_each_evictable_lru(lru){
+         if(nr[lru]){
+             nr_to_scan = min(nr[lru],SWAP_CLUSTER_MAX);
+             nr[lru] -= nr_to_scan;
+             
+             nr_reclaimed += shrink_list(lru,nr_to_scan,lruvec,memcg,sc);
+         }
+     }
+ }
+}
+```
+
+内存也总共分两类，一类是**匿名页**，和虚拟地址空间进行关联；一类是**内存映射**，不但和虚拟地址空间关联，还和文件管理关联。
+
+每一类都有两个列表，一个是active，一个是inactive。如果要换出内存，就是从不活跃的列表中找出最不活跃的。
+
+```c++
+enum lru_list {
+    LRU_INACTIVE_ANON = LRU_BASE;
+    LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE;
+    LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE;
+    LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE;
+    LRU_UNEVICTABLE,
+    NR_LRU_LISTS
+};
+
+#define for_each_evictable_lru(lru) for(lru=0;lru <= LRU_ACTIVE_FILE;lru++)
+static unsigned long shrink_list(enum lru_list lru,unsigned long nr_to_scan,
+                                struct lruvec *lruvec,struct mem_cgroup *memcg,
+                                struct scan_control *sc){
+    if(is_active_lru(lru)){
+        if(inactive_list_is_low(lruvec,is_file_lru(lru),memcg,sc,true))
+            shrink_active_list(nr_to_scan,lruvec,sc,lru);
+        return 0;
+    }
+    return shrink_inactive_list(nr_to_scan,lruvec,sc,lru);
+}
+//shrink_list会先缩减活跃页面列表，再压缩不活跃的页面列表。对于不活跃列表的缩减，shrink_inactive_list就需要对页面进行回收
+//;对于匿名页，需要分配swap，将内存页写入文件系统；对于内存映射关联了文件的，需要将在内存中的修改写回文件中。
+```
+
+**用户态内存映射**
+
+mmap系统调用
+
+```c++
+SYSCALL_DEFINE6(mmap,unsigned long,addr,unsigned long,len,unsigned long,prot,unsigned long,flags,unsigned long,fd,unsigned long,off){
+    error = sys_map_pgoff(addr,len,prot,flags,fd,off >> PAGE_SHIFT);
+}
+
+SYSCALL_DEFINE6(mmap_pgoff,unsigned long,addr,unsigned long,len,unsigned long,prot,unsigned long,flags,unsigned long,fd,unsigned long,pgoff){
+    struct file *file = NULL;
+    .......
+    file = fget(fd);
+    .......
+    retval = vm_mmap_pgoff(file,addr,len,prot,flags,pgoff);
+    return retval;
+}
+```
+
+vm_mmap_pgoff->do_mmap_pgoff->do_mmap,主要做了以下事:
+
+* 调用get_unmapped_area找到一个没有映射的区域
+* 调用mmap_region映射这个区域
+
+```c++
+unsigned long get_unmapped_area(struct file *file,unsigned long addr,unsigned long len,unsigned long pgoff,unsigned long flags){
+   unsigned long (*get_area)(struct file *,unsigned long,unsigned long,unsigned long,unsigned long);
+   //如果是匿名映射，调用mm_struct->get_unmapped_area,其实就是arch_get_unmapped_area,会调用find_vma_prev,在
+   //表示虚拟内存区域的vm_area_struct红黑树找到相应的位置
+   //如果不是匿名映射，而是映射到一个文件，如果是ext4文件系统，调用的是thp_get_unmapped_area,最终还是调用
+   //mm_struct->get_unmapped_area
+   get_area = current->mm->get_unmapped_area;
+   if(file){
+       if(file->f_op->get_unmapped_area){
+           get_area = file->f_op->get_unmapped_area;
+       }
+   }
+}
+
+unsigned long mmap_region(struct file *file,unsigned long addr,unsigned long len,vm_flags_t vm_flags,unsigned long pgoff,struct list_head *uf){
+    struct mm_struct *mm = current->mm;
+    struct vm_area_struct *vma,*prev;
+    struct rb_node **rb_link,*rb_parent;
+    //是否能够基于虚拟内存区域的前一个vm_area_struct合并到一起
+    vma = vma_merge(mm,prev,addr,addr + len,vm_flags,NULL,file,pgoff,NULL,NULL_VM_UEFD_CTX);
+    if(vma)
+        goto out;
+    //在slub里创建一个新的vm_area_struct,然后设置参数
+    vma = kmem_cache_zalloc(vm_area_cachep,GFP_KERNEL);
+    if(!vma){
+        error = -ENOMEM;
+        goto unacct_error;
+    }
+    vma->vm_mm = mm;
+    vma->vm_start = addr;
+    vma->vm_end = addr + len;
+    vma->vm_flags = vm_flags;
+    vma->vm_page_prot = vm_get_page_prot(vm_flags);
+    vma->vm_pgoff = pgoff;
+    INIT_LIST_HEAD(&vma->anon_vma_chain);
+    
+    if(file){
+        vma->vm_file = get_file(file);
+        error = call_mmap(file,vma);
+        addr = vma->vm_start;
+        vm_flags = vma->vm_flags;
+    }
+    //将新创建的vm_area_struct挂载在mm_struct里面的红黑树上
+    vma_link(mm,vma,prev,rb_link,rb_parent);
+    return addr;
+}
+//对于打开的文件，有个struct file结构，file->address_space中有棵变量名为i_mmap的红黑树，vm_area_struct就挂在这棵树上
+
+struct address_space {
+    struct inode *host;/** owner: inode,block_device*/
+    struct rb_root i_mmap;/** tree of private and shared mappings */
+    const struct address_space_operations *a_ops;
+}
+
+static void __vma_link_file(struct vm_area_struct *vma){
+    struct file *file;
+    file = vma->vm_file;
+    if(file){
+        struct address_space *mapping = file->f_mapping;
+        vma_interval_tree_insert(vma,&mapping->i_mmap);
+    }
+}
+```
+
+**用户态缺页异常**
+
+一旦开始访问虚拟内存某个区域，如果物理页，就会触发缺页中断，do_page_fault
+
+```c++
+dotraplinkage void notrace do_page_fault(struct pt_regs,unsigned long error_code){
+    unsigned long address = read_cr2();/** Get the faulting address */
+    __do_page_fault(regs,error_code,address);
+}
+
+static noinline void __do_page_fault(struct pt_regs *regs,unsigned long error_code,unsigned long address){
+    struct vm_area_struct *vma;
+    struct task_struct *tsk;
+    struct mm_struct *mm;
+    tsk = current;
+    mm = tsk->mm;
+    //判断缺页中断是否发生在内核
+    if(unlikely(fault_in_kernel_space(address))){
+        //如果发生在内核则调用vmalloc_fault
+        if(vmalloc_fault(address) >= 0){
+            return;
+        }
+        //如果在用户空间，找到vm_area_struct,然后调用handle_mm_fault来映射这个区域
+        vma = find_vma(mm,address);
+        fault = handle_mm_fault(vma,address,flags);
+    }
+}
+
+static int __handle_mm_fault(struct vm_area_struct *vma,unsigned long address,unsigned int flags){
+    struct vm_fault vmf = {
+        .vma = vma,
+        .address = address & PAGE_MASK,
+        .flags = flags,
+        .pgoff = linear_page_index(vm,address),
+        .gfp_mask = __get_fault_gfp_mask(vma),
+    };
+    struct mm_struct *mm = vma->vm_mm;
+    //全局页目录项
+    pgd_t *pgd;
+    p4d_t *p4d;
+    int ret;
+    pgd = pgd_offset(mm,address);
+    p4d = p4d_alloc(mm,pgd,address);
+    //上层页目录项
+    vmf.pud = pub_alloc(mm,p4d,address);
+    //中间页目录项
+    vmf.pmd = pmd_alloc(mm,vmf.pud,address);
+    //直接页表项
+    return handle_pte_fault(&vmf);
+}
+//每个进程都有独立的地址空间，为了这个进程独立完成映射，每个进程都有独立的进程页表，这个页表的最顶级的pgd存放在task_struct中的
+//mm_struct的pgd变量里
+```
+
+![image-20220201112401953](os.assets/image-20220201112401953.png)
+
+dup_mm->mm_init->mm_alloc_pgd->pgd_alloc->pgd_ctor
+
+```c++
+static void pgd_ctor(struct mm_struct *mm,pgd_t *pgd){
+    if(CONFIG_PGTABLE_LEVELS == 2 ||
+      (CONFIG_PGTABLE_LEVELS==3 && SHARED_KERNEL_PMD) ||
+      CONFIG_PGTABLE_LEVELS >= 4){
+        //拷贝了对于swapper_pg_dir的引用。swapper_pg_dir是内核页表最顶级的全局目录
+        clone_pgd_range(pgd + KERNEL_PGD_BOUNDARY,
+                        swapper_pg_dir + KERNEL_PGD_BOUNDARY,
+                        KERNEL_PGD_PTRS);
+    }
+}
+```
+
+一个进程的虚拟地址空间包含用户态和内核态。为了从虚拟地址空间映射到物理页面，页表也分为用户地址空间的页表和内核页表。在内核里，映射靠内核页表，这里内核页表会拷贝一份到进程的页表。
+
+一个进程fork完毕之后，有了内核页表，有了自己顶级的pgd，但是对于用户空间还没映射过，这需要等到这个进程在某个CPU上运行，并对内存访问的那一刻。
+
+当这个进程被调度到某个CPU上运行时，调用context_switch进行上下文切换。对于内存方面的切换会调用switch_mm_irqs_off,这里会调用load_new_mm_cr3。
+
+**cr3**
+
+* cr3是CPU的一个寄存器，会指向当前进程的顶级pgd。如果CPU的指令要访问进程的虚拟内存，就会自动从cr3里得到pgd在物理内存的地址。然后根据里面的页表解析虚拟内存的地址为物理内存，从而访问真正的物理内存上的数据。
+
+* 存放当前进程的顶级pgd，是硬件的要求。存放的是pgd在物理内存的地址，不能是虚拟地址。因而load_new_mm_cr3里面会使用__pa,将mm_struct里面的成员变量pgd变为物理地址，才能加载到cr3中。
+* 用户态在运行过程中，访问虚拟内存中的数据，会被cr3里面指向的页表转换为物理地址后，才在物理内存中访问数据，这个过程是在用户态运行的
+
+```c++
+static int handle_pte_fault(struct vm_fault *vmf) {
+    pte_t entry;
+    vmf->pte = pte_offset_map(vmf->pmd,vmf->address);
+    vmf->orig_pte = *vmf->pte;
+    //页表项中从没出现过
+    if(!vmf->pte){
+        //匿名页
+        if(vma_is_anonymous(vmf->vma))
+            return do_anonymous_page(vmf)
+        else
+        //映射到文件
+            return do_fault(vmf);
+    }
+ 
+    //原来出现过，被换到硬盘中
+    if(!pte_present(vmf->orig_pte))
+        return do_swap_page(vmf);
+}
+
+static int do_anonymous_page(struct vm_fault *vmf){
+    struct vm_area_struct *vma = vmf->vma;
+    struct mem_cgroup *memcg;
+    struct page *page;
+    int ret = 0;
+    pte_t entry;
+    //分配一个页表项
+    if(pte_alloc(vma->vm_mm,vmf->pmd,vmf->address));
+    	return VM_FAULT_OOM;
+    //分配一个页，之后会调用alloc_pages_vma,最终调用__alloc_pages_nodemask
+    //伙伴系统的核心方法
+    page = alloc_zeroed_user_highpage_movable(vma,vmf->address);
+    //将页表项指向新分配的物理页
+    entry = mk_pte(page,vma->vm_page_prot);
+    if(vma->vm_flags & VM_WRITE)
+        entry = pte_mkwrite(pte_mkdirty(entry));
+    vmf->pte = pte_offset_map_lock(vma->vm_mm,vmf->pmd,vmf->address,&vmf->ptl);
+    //将页表项塞到页表
+    set_pte_at(vma->vm_mm,vmf->address,vmf->pte,entry);
+}
+
+static int __do_fault(struct vm_fault *vmf) {
+    struct vm_area_struct *vma = vmf->vma;
+    int ret;
+    ret = vma->vm_ops->fault(vmf);
+    return ret;
+}
+
+static const struct vm_operations_struct ext4_file_vm_ops = {
+    .fault = ext4_filemap_fault,
+    .map_pages = filemap_map_pages,
+    .page_mkwrite = ext4_page_mkwrite,
+}
+
+int ext4_filemap_fault(struct vm_fault *vmf){
+    struct inode = file_inode(vmf->vma->vm_file);
+    err = filemap_fault(vmf);
+    return err;
+}
+
+int filemap_fault(struct vm_fault *vmf){
+    int error;
+    struct file *file = vmf->vma->vm_file;
+    struct address_space *mapping = file->f_mapping;
+    struct inode *inode = mapping->host;
+    pgoff_t offset = vm->pgoff;
+    struct page *page;
+    int ret = 0;
+    //对于文件映射，文件在物理内存有页面作为缓存，找到这个页
+    page = find_get_page(mapping,offset);
+    if(likely(page)&&!(vmf->flags & FAULT_FLAG_TRIED)) {
+        //如果找到这个页，预读一些数据到内存，没有就跳到no_cached_page
+        do_async_mmap_readahead(vmf->vma,ra,file,page,offset);
+    } else if(!page) {
+        goto no_cached_page;
+    }
+    vmf->page = page;
+ 	return ret | VM_FAULT_LOCKED;
+ no_cached_page:
+    error = page_cache_read(file,offset,vmf->gfp_mask);
+}
+
+static int page_cache_read(struct file *file,pgoff_t offset,gfp_t gfp_mask) {
+    struct address_space *mapping = file->f_mapping;
+    struct page *page;
+    page = __page_cache_alloc(gfp_mask|__GFP_COLD);
+    ret = add_to_page_cache_lru(page,mapping,offset,gfp_mask & GFP_KERNEL);
+    ret = mapping->a_pos->readpage(file,page);
+}
+
+static const struct address_space_operations ext4_apos = {
+    .readpage = ext4_readpage,
+    .readpages = ext4_readpages,
+}
+
+static int ext4_read_inline_page(struct inode *inode,struct page *page) {
+    void *kaddr;
+    //将物理内存映射到内核的虚拟空间(临时映射到内核)
+    kaddr = kmap_atomic(page);
+    ret = ext4_read_inline_data(inode,kaddr,len,&iloc);
+    flush_dcache_page(page);
+    //取消内核的临时映射
+    kunmap_atomic(kaddr);
+}
+```
+
+
+
+```c++
+int do_swap_page(struct vm_fault *vmf) {
+    struct vm_area_struct *vma = vmf->vma;
+    struct page *page,*swapcache;
+    struct mem_cgroup *memcg;
+    swp_entry_t entry;
+    pte_t pte;
+    entry = pte_do_swp_entry(vmf->orig_pte);
+    //查找swap文件有没有缓存
+    page = lookup_swap_cache(entry);
+   	//如果没有缓存，调用swapin_readahead把swap文件读到内存，形成内存页，并通过mk_pte生成
+   	//页表项。set_pte_at将页表项插入页表，swap_free将swap文件清理（因为重新加载回内存，不需要swap文件了）。
+    if(!page) {
+        //swapin_readahead最终也会调用swap_readpage,同样也需要用kmap_atomic做临时映射。
+        page = swapin_readahead(entry,GFP_HIGHUSER_MOVABLE,vma,vmf->address);
+    }
+    swapcache = page;
+    pte = mk_pte(page,vma->vm_page_prot);
+    set_pte_at(vma->vm_mm,vmf->address,vmf->pte,pte);
+    vmf->orig_pte = pte;
+    swap_free(entry);
+}
+```
+
+![image-20220201191037724](os.assets/image-20220201191037724.png)
+
+
+
+页表一般很大，只能放在内存中，操作系统每次访问内存，都要先查询页表得到物理地址，然后访问该物理地址读取指令、数据。
+
+为了提高映射速度，引入了**TLB**(Translation Lookaside Buffer),专门用来做地址映射的硬件设备，不在内存中，存储的数据比较少，但是比内存快。是页表的Cache，其中存储了当前最可能被访问到的页表项。
+
+![image-20220201191553451](os.assets/image-20220201191553451.png)
+
+**内核态内存映射**
+
+* 内核态内存映射函数vmalloc、kmap_atomic是如何工作的
+* 内核态页表是放在哪里的，如果工作的？swapper_pg_dir是怎么回事
+* 出现内核态缺页异常如何处理
+
+//TODO:???????
+
+## 文件系统
+
+新的系统并不是只为了做同样的事情比老的系统快一点，还应该允许用以前完全不可能的方法处理事情。
+
+用以前完全不可能的方法来处理事情
+
+元数据：作为文件系统，一定要提供存储、查询和处理数据的功能。文件系统就保存了一个内部数据结构（VFS）
+
+，使得这些操作成为可能，为文件系统提供特定的身份和性能特征。元数据是专门交给文件驱动程序用的。
+
+**fsck**:
+
+确保文件系统驱动程序要用的元数据是干净的。生效的时机：
+
+* 每次Linux启动，没有挂接任何文件系统的时候，启动fsck扫描下/etc/fstab文件中列出的所有本地文件系统
+* 每次Linux关闭，要把还在内存中的被称之为页面缓存或磁盘中缓存中的数据转送到磁盘，还要保证把已经挂接的文件系统卸载干净
+
+当遇到异常关机，重启后fsck会全面审查元数据（时间会很长），修正一切可以修复的数据（会丢弃不可修复的数据）
+
+针对于fsck，日志是一个更好的解决方案，文件系统的日志记录了它对元数据都干了些什么。
+
+​	元数据出现问题后，**fsck**在遇到有日志的文件系统时，由文件系统驱动负责按照日志里的记载去恢复元数据（更快）
+
+**ReiserFS**
+
+一个最好的文件系统，不单能够管理好用户的文件，还能适应环境干点别的，比如代替数据库。
+
+关注小文件的性能。常见的ext2、ext3等文件系统一遇到小文件就傻了（TODO:为什么傻了？？？），迫使开发者处理比较零碎的数据时，不得不考虑采用数据库或其他手段获取想要的性能指标。“针对问题进行创作”
+
+ext2分析：比较擅长存储大量大小在20K以上的文件。最小存储单元是1K或4K。**ReiserFS**在处理小于1K的文件时，比ext快8到15倍，处理大于1K的文件时，也不会有什么性能损失。
+
+ReiserFS技术：
+
+采用**B*树**的数据结构，一种全新的经过特殊优化的树形数据结构。ReiserFS用它组织元数据，相当于整个磁盘分区是一个**B*树**。
+
+**B树**是针对磁盘或其他存储介质而设计的一种多叉平衡查找树。实际文件系统并不使用B树，大多使用**B+树**。**B+树**是**B树**的一个变形，在降低磁盘读写代价的同时，提高了查询效率的稳定性。B*树是B+树的变形，B\*树分配新节点的概率比B+树要低，空间利用率更高。
+
+利用B*树的特性，ReiserFS允许一个目录下可以容纳10万个子目录。ReiserFS可以根据需要动态的分配索引，也省去了固定索引，没有附加空间，提高了存储效率。ReiserFS不适用固定大小的数据块分配存储空间，采用精确分配原则。ReiserFS还提供了一种以尾文件（比系统文件块小的文件或文件的结尾部分）为中心的特殊优化，ReiserFS可以利用**B\*树**的叶子节点存储文件。
+
+ReiserFS实际做了两件事：
+
+* 显著提高小文件性能，把文件数据和索引信息放在一起，大多数只需要一次磁盘IO就能完成。
+* 压缩尾文件，就可以节省大量磁盘空间。尾文件压缩是以牺牲速度为代价
+
+**进程文件系统procfs**
+
+启动时动态生成的文件系统，**用于用户空间通过内核访问进程信息**。经过不断演变，**如今Linux提供的procfs已经不单单用于访问进程信息，还是一个用户空间与内核交换数据修改系统行为的接口**。这个文件系统通常被挂接到/proc目录。
+
+**procfs**源自UNIX世界，几乎所有类UNIX系统都有提供。最早在UNIX第8版实现，后来又移植到SVR4，最后由一个称为“**9号计划**”的项目做大量改进，使得/proc成为文件系统真正的一部分。
+
+**proc目录下文件**
+
+| 名称        | 功能                                                      | 名称       | 功能                       |
+| ----------- | --------------------------------------------------------- | ---------- | -------------------------- |
+| apm         | 高级电源管理信息                                          | loadavg    | 负载均衡信息               |
+| buddyinfo   | Buddy算法内存分配信息                                     | locks      | 内核锁                     |
+| compline    | 内核的命令行参数                                          | mdstat     | 磁盘阵列状态               |
+| config.gz   | 当前内核的.config文件                                     | meminfo    | 内存信息                   |
+| cpuinfo     | cpu信息                                                   | misc       | 杂项信息                   |
+| devices     | 可以用到的设备（块设备/字符设备）                         | modules    | 系统已经加载的模块文本列表 |
+| diskstats   | 磁盘I/O统计信息                                           | mounts     | 已挂接的文件系统列表       |
+| dma         | 使用的DMA通道                                             | partitions | 磁盘分区信息               |
+| execdomains | 执行区域列表                                              | pci        | 内核识别的PCI设备列表      |
+| fb          | Frame buffer信息                                          | self       | 访问proc文件系统的进程信息 |
+| filesystems | 支持的文件系统                                            | slabinfo   | 内核缓存信息               |
+| Interrupt   | 中断的使用情况，记录中断产生次数                          | splash     | splash信息                 |
+| iomem       | I/O内存映射关系                                           | stat       | 全面统计状态表             |
+| ioports     | I/O端口分配情况                                           | swaps      | 交换空间使用情况           |
+| kcore       | 内核核心映像，GDB可以利用它查看当前内核的所有数据结构状态 | uptime     | 系统正常运行时间           |
+| key-users   | 密钥保留服务文件                                          | version    | 内核版本                   |
+| kmsg        | 内核消息                                                  | vmstat     | 虚拟内存统计表             |
+| ksyms       | 内核符号表                                                | zoneinfo   | 内存管理区信息             |
+
+**/proc下子目录**
+
+| 名称     | 功能                 | 名称    | 功能                           |
+| -------- | -------------------- | ------- | ------------------------------ |
+| [number] | 进程信息             | irq     | 中断请求设置接口               |
+| acpi     | 高级配置与电源接口   | net     | 网络各种状态信息               |
+| asound   | ALSA声卡驱动接口     | scsi    | SCSI设备信息                   |
+| bus      | 系统中已安装总线信息 | sys     | 内核配置接口                   |
+| driver   | 驱动信息             | sysvipc | 中断使用情况，记录中断产生次数 |
+| fs       | 文件系统特别信息     | tty     | tty驱动信息                    |
+| ide      | IDE设备信息          |         |                                |
+
+[number]这些目录，里面包含的文件，描述了一个进程的方方面面，**是procfs最初目的的体现**。这些文件都是只读的，top、ps就是依据这些目录中文件所提供的内容进行工作的。
+
+sys目录，包含的文件大多都是可以写的，通过改写这些文件的内容，可以起到修改内核参数的目的。系统命令sysctl就是利用这个目录实现的全部功能。
+
+TODO:实战？？？？
+
+**tmpfs文件系统**
+
+**RamDisk**，将一部分固定大小的内存当作分区来使用。这是一种非常古老的技术（上世纪80年代初），MS-DOS在2.0版本就加入了对RamDisk的支持。Linux将这个技术直接编译进内核。
+
+**RamDisk**的缺点：浪费物理内存空间（即使一个字节没有使用，所有RamDisk都需要进行格式化）；在不断的生产实践过程中，大量临时文件很影响程序性能。于是有人把程序产生的临时文件放入RamDisk来提高整体性能
+
+鉴于上述需求，在Linux2.4内核中，引入了**tmpfs**。
+
+类似于RamDisk,既可以使用内存，又可以使用交互分区。tmpfs文件系统使用虚拟内存子系统的页面存储文件，tmpfs不关心这些页面存储在物理内存还是交换分区。
+
+**tmpfs**跟其他文件系统如：ext2、ext3、ReiserFS等是完全不一致的，它们在Linux中被称为块设备。tmpfs直接建立在**VM**之上的。tmpfs刚被挂接时只有很小的空间。随着文件的复制和创建，tmpfs文件系统驱动程序会分配更多的**VM**，并按需求动态地增加文件系统的空间。
+
+**devfs和sysfs文件系统**
+
+**类UNIX系统**最“酷”的地方在于：设备不是简单的隐藏在晦涩的API之后，而是真正的与普通文件、目录、符号链接一样，存在于文件系统之上。
+
+devfs:提供一个新的、更合理的方式管理那些位于dev目录下的所有块设备和字符设备。典型的Linux系统以一种不太理想，而且麻烦的方式管理这些特殊文件。
+
+传统的Linux设备驱动程序，要向系统提供一个文件映射，需要 提供一个主设备号，而且这个主设备号必须保证唯一。早期，这个主设备号被设计的只有8位。
+
+devfs给驱动开发人员提供一个devfs_register的内核API，这个API可以接受一个设备名称作为参数，调用成功后，/dev目录下就会出现与设备名相同的文件名。而且devfs_register也支持主设备号的策略，这样可以保持向下兼容性。
+
+工作方式：一旦所有设备驱动程序启动并向内核注册适当的设备，内核就启动/sbin/init进程，系统初始化脚本开始执行。启动过程初期，rc脚本将devfs文件系统安装到/dev中，这样/dev就包含了devfs所表达的所有设备映射关系，所有注册的设备依然可以通过/dev目录进行访问。
+
+优点：所有需要的设备映射关系都由内核自动创建，就不用写死设备文件，/dev目录就不会充斥大量的无用设备文件。
+
+devfsd       自定义dev    TODO:???????
+
+**sysfs的由来**
+
+Liunx下设备管理方式的演进：
+
+* 静态/dev文件，将设备通过设备节点放入/dev目录下，每个设备节点是/dev根目录下的一个文件。Linux通过**主次设备号**来指定不同的设备节点。TODO:早期设备管理是怎样的一个流程。
+* devfs，linux kernel2.4版本后引入。允许使用自定义的设备名称来注册设备节点，同时兼容老的设备号；所有的设备都有内核在系统启动时期创建并注册到/dev目录下
+* udev，devfs解决了静态/dev管理的很多问题。基于devfs的一些缺陷，在linux kernel2.6.x版本后，引入了udev对其进行改进。udev是一个对/dev下设备节点进行**动态管理**的**用户空间程序**，它通过**自身的守护进程**和**自定义的一系列规则**来处理设备的加载、移除和热插拔等功能。
+
+| devfs                          | udev                                                     |
+| ------------------------------ | -------------------------------------------------------- |
+| 命名不够灵活，设备名称不可预知 | 支持设备的固定命名                                       |
+|                                | 设备热插拔时，用户程序有办法得到通知，udev运行在用户空间 |
+| 只显示存在的设备列表           |                                                          |
+| major、minor快被分配光了       |                                                          |
+
+* sysfs，Linux2.6引入的一种虚拟文件系统，挂载在/sys目录下，这个文件系统把实际链接到系统上的设备，总线及其对应的驱动程序组织成分级的文件。从而将设备的层次结构映射到用户空间中，用户空间可以通过修改sysfs中文件属性来修改设备属性，从而与内核设备交互
+
+sysfs是对devfs改进，udev也是对devfs的改进。udev就是利用sysfs提供的信息来实现的：udev会根据sysfs里的设备信息创建/dev目录下的相应设备节点。
+
+devfs的缺点：
+
+* 不确定的设备映射，有时一个设备映射的设备文件可能不同；
+* 没有足够的主/辅设备号，没有给主/辅设备号太多的扩展余地；
+* dev目录下文件太多而且不能表示当前系统上的实际设备；
+* 命名不够灵活，不能任意指定。
+
+意识到procfs的复杂度之后，开始将procfs中有关设备的部分独立出来。最开始采用ramfs(可以看作RamDisk和tmpfs的中间产品)作为基础，名为ddfs，后来发现driverfs更为贴切。这些都是在2.5版本中内核鼓捣的。driverfs把实际连接到系统上的设备和总线组织成一个分级的文件，和devfs相同，用户空间的程序同样可以利用这些信息以实现和内核的交互，该系统是当前实际设备树的一个直观反映。到了2.6内核，也就是2.5的最终成型版本，新设计了一个kobject子系统，它就改变了实现策略抛弃ramfs，利用kobject子系统来建立这些信息。
+
+因为本身源于procfs的设计思路，提供的也是用户空间和系统空间交换信息的接口。用户空间工具udev就是利用了sysfs提供的信息在用户空间实现了与devfs完全相同的功能。
+
+**其他特种文件系统**
+
+RelayFS,专门用来从内核空间向用户空间反馈大量数据。是通过mmap来完成的。
+
+debugfs，调试内核。基于relay技术实现
+
+规划文件系统时，需要考虑以下几点：
+
+* 文件系统要有严格的组织形式，使得文件能够以块为单位进行存储
+* 文件系统中也要有索引区，用来方便查找一个文件分成的多个块都存放在什么位置
+* 如果文件系统中有的文件是热点文件，近期经常被读取和写入，文件系统应该有缓存层
+* 文件应该用文件夹形式组织起来，方便管理和查询
+* Linux内核要在自己的内存里面维护一套数据结构，来保存那些文件被那些进程打开和使用。
+
+```c++
+struct ext4_inode {
+    __lel16 i_mode;//File mode
+    __lel16 i_uid;//Low 16 bits of Owner Uid 
+    __lel32 i_size_lo;//Size in bytes
+    __lel32 i_atime;//Access time
+    __lel32 i_ctime;//Inode Change time
+    __lel32 i_mtime;//Modification time
+    __lel32 i_dtime;//Deletion time
+    __lel16 i_gid;//Low 16 bits of Group Id.
+    __lel16 i_links_count;//Links count
+    __lel16 i_blocks_lo;//Blocks count
+    __lel32 i_flags;//File flags
+    __lel32 i_block[EXT4_N_BLOCKS];//Pointers to blocks
+    __lel32 i_generation;//File version(for NFS)
+    __lel32 i_file_acl_lo;//File ACL
+    __lel32 i_size_high;
+}
+```
+
+每个inode，4个字节记录一个block号码，inode关于block的记录：12直接、1间接、1双间接、1三间接
+
+12直接：12 * 4kb = 48kb
+
+1间接：1024 * 4kb = 4096kb
+
+1双间接：1024 * 1024 * 4kb = 4096mb
+
+1三间接：1024 * 1024 *1024 * 4 = 4096gb
+
+但是有一个显著的问题，对于大文件，访问速度慢，引入了一个新的概念**Extents**,其实会保存成一棵树
+
+如果使用ext4的extents特性，必须在挂载时指定该特性
+
+树有一个个的节点，有叶子节点，也有分支节点，每个节点都有一个头。ext4_extent_header可以用来描述某个节点
+
+```c++
+struct ext4_extent_header {
+    //probably will support different formats
+    __le16 eh_magic;
+    //number of valid entries
+    //节点里有多少项，这里的项分为两种，如果是叶子节点，这一项直接指向硬盘上连续块的地址，称为数据节点ext4_extent;
+    //如果是分支节点，这一项指向下一层的分支节点或叶子节点，称为索引节点ext4_extent_idx。两种类型的项大小都为12byte
+    __le16 eh_entries;
+    //capacity of store in entries
+    __le16 eh_max;
+    //has tree real underlying blocks
+    __le16 eh_depth;
+    //generation of the tree
+    __le16 eh_generation;
+}
+
+struct ext4_extent {
+    __le32 ee_block;//first logical block extent covers
+    __le32 ee_len;//number of blocks coverd by extent
+    __le32 ee_start_hi;//high 16 bits of physical block
+    __le32 ee_start_lo;//low 32 bits of physical block
+}
+
+struct ext4_extent_idx {
+    //index covers logical blocks form 'block'
+    __le32 ei_block;
+    //pointer to the physical block of the next level.leaf or next index could be here.
+    __le32 ei_leaf_lo;
+    //high 16 bits of physical block
+    __le16 ei_leaf_hi;
+    __u16 ei_unused;
+}
+//TODO:具体表现形式
+如果文件不大，inode的i_block,可以放的下一个ext4_extent_header和4项ext4_extent。此时eh_depth为0，也即叶子节点
+如果文件比较大，4个extent放不下，就会分裂成一棵树，eh_depth>0的节点就是索引节点。
+除了根节点，其他的节点都保存在一个块4k里，4k扣除ext_extent_header的12byte，剩下能放340项，每个extent最大能表示128MB的数据
+```
+
+```c++
+struct inode *__ext4_new_node(handle_t *handle,struct inode *dir,
+                             umode_t mode,const struct qstr *qstr,
+                             __u32 goal,uid_t *owner,__u32 i_flags,
+                             int handle_type,unsigned int line_no,
+                             int nblocks){
+    //读取inode位图，找到空闲的inode
+    inode_bitmap_bh = ext4_read_inode_bitmap(sb,group);
+    ino = ext4_find_next_zero_bit((unsigned long *)inode_bitmap_bh->b_data,
+                                 EXT_INODES_PER_GROUP(sb),ino);
+}
+```
+
+“一个块的位图 + 一系列的块”，外加“一个块的inode位图 + 一系列的inode结构”，最多能表示128M。把这一整个称为一个块组。有N多块组，就能表示N大的文件。
+
+对于块组，用ext4_group_desc来表示，这里面对于一个块组的里的inode位图bg_inode_bitmap_lo、块位图bg_block_bitmap_lo、inode列表bg_inode_table_lo，都有相应的成员变量。
+
+块组有多个，快组描述符也同样组成一个列表，称为**块组描述符表**
+
+还需要一个数据结构，对整个文件系统进行描述，就是**超级块**ext4_super_block
+
+超级块和快组描述符表都有副本保存在每一个**块组中。**
+
+**Meta Block Groups**：将块组分为多个组，称为元块组，每个元块组里的块组描述符表仅仅包括自己的，一个元块组包含64个块组，这样一个元块组中的块组描述符表最多64项
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
