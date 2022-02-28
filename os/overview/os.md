@@ -1,4 +1,4 @@
-## ，《趣谈linux》
+## 《趣谈linux》
 
 #### 大纲
 
@@ -2522,49 +2522,765 @@ struct inode *__ext4_new_node(handle_t *handle,struct inode *dir,
 
 **Meta Block Groups**：将块组分为多个组，称为元块组，每个元块组里的块组描述符表仅仅包括自己的，一个元块组包含64个块组，这样一个元块组中的块组描述符表最多64项
 
+进程要想往文件系统里写数据，需要和其他层的组件一起合作：
+
+* 应用层，进程可通过系统调用如sys_open、sys_open
+* 在内核，每个进程都需要为打开的文件，维护数据结构
+* 在内核，整个系统打开的文件，也需要维护一定的数据结构
+* Linux可支持多达数十种不同的文件系统，实现各不相同，因此Linux内核向用户空间提供了虚拟文件系统这个统一接口，来对文件系统进行操作。提供了常见的文件系统对象模型，例如inode、directory entry、mount等，以及操作这些对象的方法，如inode operations、directory operations、file operations等
+* 为了读写ext文件系统，要通过块设备I/O层
+
+![image-20220216223214077](os.assets/image-20220216223214077.png)
+
+**挂载文件系统**
+
+```c++
+register_filesystem(&ext4_fs_type);
+
+static struct file_system_type ext4_fs_type = {
+    .owner = THIS_MODULE,
+    .name = "ext4",
+    .mount = ext4_mount,
+    .kill_sb = kill_block_super,
+    .fs_flags = FS_REQUIRES_DEV
+}
+```
+
+mount系统调用链：do_mount->do_new_mount->vfs_kern_mount
+
+```c++
+struct mount {
+    struct hlist_node mnt_hash;
+    struct mount *mnt_parent;//装在点所在的父文件系统
+    struct dentry *mnt_mountpoint;//装载点在父文件系统中dentry
+    struct vfsmount mnt;
+    union {
+        struct rcu_head mnt_rcu;
+        struct llist_node mnt_list;
+    };
+    struct list_head mnt_mounts;
+    struct list_head mnt_child;
+    struct list_head mnt_instance;
+    const char *mnt_devname;
+    struct list_head mnt_list;
+} __randomize_layout
+    
+struct vfsmount {
+    struct dentry *mnt_root;//当前文件系统根目录的dentry
+    struct super_block *mnt_sb;//指向超级块的指针
+    int mnt_flags;
+} __randomize_layout
+
+struct dentry * mount_fs(struct file_system_type *type,int flags,const char *name,void *data) {
+    struct dentry *root;
+    struct super_block *sb;
+    
+    root = type->mount(typee,flags,name,data);
+    sb = root->d_sb;
+}
+```
+
+在文件系统的实现中，每个在硬盘上的结构，在内存中也对应相同格式的结构。当所有的数据结构都读到内存里，内核就可以通过操作这些数据结构，来操作文件系统了。
+
+**虚拟文件系统**
+
+作为内核子系统，为**用户空间程序**提供了**文件和文件系统**相关的接口。系统中所有文件系统不但依赖VFS共存，而且也依靠VFS系统协同工作。通过虚拟文件系统，程序可以利用标准的Unix系统调用对不同的文件系统，甚至不同介质上的文件系统进行读写操作。
+
+系统调用可以在这些不同的文件和介质之间执行。**老式的操作系统**（如DOS），是无力完成上述工作的，任何对非本地文件系统的访问都必须依靠特殊工具才能完成。正是由于现代操作系统引入抽象层，比如Linux通过虚拟接口访问文件系统，才使得这种协作性和泛型存取成为可能。
+
+新的文件系统和新类型的存储介质都能找到进入linux之路。
+
+VFS提供了一个通用文件系统模型，该模型囊括了**任何文件系统的常用功能集和行为**，该模型偏重于Unix风格的文件系。它定义了**所有文件系统**都支持的、**基本的、概念上的接口和数据结构**。同时，实际文件系统也将自身的诸如“如何打开文件”等概念在**形式上**与**VFS的定义**保持一致。因为实际文件系统的代码在统一的接口和数据结构下隐藏了具体的实现细节。
+
+**Unix文件系统**
+
+Unix使用了四种和文件系统相关的传统抽象概念：文件、目录项、索引节点和安装点。
+
+从本质上讲，文件系统是**特殊的数据分层存储结构**，它包含文件、目录和相关的控制信息。**面向记录的文件系统**TODO:?????面向记录的文件系统提供更丰富、更结构化的表示，而简单的面向字节流抽象的Unix文件则以简单性和相当的灵活性为代价。
+
+Unix系统将文件的相关信息和文件本身这两个概念加以区分，例如访问控制权限、大小、拥有者、创建时间等信息，这些数据被存储在一个单独的数据结构中，被称为索引节点inode
+
+所有这些信息都和文件系统的控制信息密切相关。文本系统的控制信息存储在超级块中，超级块是一种包含文件系统信息的数据结构。
+
+VFS其实采用面向对象的设计思路。使用一组数据结构来代表通用文件对象。这些对象包含数据的同时也包含操作这些数据的函数指针，其中的操作函数由具体文件系统实现。
+
+* 超级块对象，代表一个具体的已安装文件系统；
+* 索引节点对象，代表一个具体的文件；
+* 目录项对象，代表一个目录项，是路径的一个组成部分；
+* 文件对象，代表由进程打开的文件
+
+VFS使用了大量结构体对象，除了上述主要对象，每个注册的文件系统都由file_system_type结构体来表示，描述了文件系统及其性能；每一个安装点也都用vfsmount结构体表示，包含安装点的相关信息，如安装位置和安装标志。
+
+每种文件系统都必须实现超级块对象，该对象用于存储特定文件系统的信息。通常对应于存放在磁盘特定扇区中的文件系统超级块。对于并非基于磁盘的文件系统（如基于内存的文件系统，如sysfs），它们会在使用现场创建超级块对象并将其保存到内存中。
+
+由super_block结构体表示，定义在<linux/fs.h>。创建、管理和撤销超级块对象的代码位于fs/super.c中。超级块对象通过alloc_super函数创建并初始化。**文件系统安装时**，文件系统会调用该函数以便从磁盘读取文件系统超级块，并且将其信息填充到内存的超级块中。
+
+超级块对象中最重要的一个域就是s_op,指向超级块的操作函数表，由super_operations结构体表示，定义<linux/fs.h>中。超级快操作表中，文件系统可以将不需要的函数指针设置成NULL，如果VFS发现操作函数为null，要么会调用通用函数指向相应操作，要么什么也不做。
+
+**索引节点对象包含了内核在操作文件或目录时需要的全部信息。对于Unix风格的文件系统，这些信息可以从磁盘索引节点直接读入。如果一个文件系统没有索引节点，那么不管这些相关信息在磁盘上如何存放，文件系统都必须从中提取这些信息。没有索引节点的文件系统通常将文件的描述信息作为文件系统的一部分存放。**这些文件系统没有将数据和控制信息分来存放。有些现代文件系统使用数据库来存储文件的数据（TODO:????）
+
+一个索引节点代表文件系统中（索引节点仅当文件被访问时，才在内存中创建？？？TODO:）的一个文件，可以是设备或管道这样的特殊文件。因此索引节点结构体中有一些和特殊文件相关的项。比如i_pipe指向一个代表有名管道的数据结构，i_bdev指向块设备结构体，i_cdev指向字符设备结构体。
+
+有时，某些文件系统可能并不能完整的包含索引节点结构体要求的所有信息。例如，有些文件可能并不记录文件的访问时间，这时，文件系统就可以在实现中选择任何合适的办法解决，例如 让i_atime=0
+
+**目录项对象**。VFS把目录当成文件对待，在路径/bin/vi中，bin和vi都属于文件，路径中每个组成部分都由一个索引节点表示。虽然他们可以统一由索引节点表示，但是VFS经常需要执行目录相关的操作，比如路径名查找等。为了方便查找操作，引入目录项的概念dentry。
+
+在路径中（包含普通文件），每一部分都是目录项对象，目录项也可以包含安装点。目录项对象没有对应的磁盘数据结构，VFS根据字符串形式的路径名现场创建。
+
+目录项状态：被使用、未被使用和负状态
+
+* 一个被使用的目录项对应一个有效的索引节点（即d_inode指向对应的索引节点）并且表明该对象存在一个或多个使用者（即d_count为正值）
+* 一个未被使用的dentry对应一个有效的索引节点，但是VFS当前并未使用它。该对象被保留在缓存中以便需要时再使用它。
+* 一个负状态的dentry没有对应的有效索引节点
+
+**目录项缓存**
+
+* “被使用的”目录项链表。该链表通过索引节点对象中的i_dentry项连接相关的索引节点。因为一个给定的索引节点可能有多个链接，所以就可能有多个目录项对象
+
+* “最近被使用的”双向链表。该链表含有未被使用的和负状态的目录项对象。
+
+* 散列表和相应的散列函数用来快速的将给定路径解析为相关目录项对象。
+
+  散列表由数组dentry_hashtable表示，其中每一个元素都是一个指向具有相同键值的目录项对象链表的指针。实际的散列值由d_hash()函数计算，它是内核提供给文件系统的唯一的一个散列函数。查找散列表要通过d_lookup()函数。
+
+而dcache在一定意义上也提供对索引节点的缓存，也就是icache。和目录对象相关的索引节点不会被释放，因为目录项会让相关索引节点的使用计数为正，这样就可以确保索引节点留在内存中。只要目录项被缓存，相应的索引节点也就被缓存了。
+
+文件访问呈现空间和时间的局部性。
+
+**文件对象**
+
+文件对象没有对应的磁盘数据，文件对象通过f_dentry指针指向相关的目录项对象，目录项会指向相关的索引节点，索引节点会记录文件是否是脏的。因为多个进程可以同时打开和操作同一个文件，所以同一个文件也可能存在多个对应的文件对象。文件对象仅仅在进程观点上代表已打开文件，反过来指向目录项对象（反过来指向索引节点对象），其实只有目录项对象才表示已打开的实际文件。
+
+**其他文件系统相关数据结构**
+
+file_system_type 描述一个文件系统的功能和行为。每种文件系统不管有多少个实例安装到系统中，还是根本没有安装到系统中，都只有一个file_system_type结构。当文件系统被实际安装时，将有一个vfsmount结构体在安装点被创建。
+
+```c++
+struct vfsmount {
+    struct list_head mnt_hash;//散列表
+    struct vfsmount *mnt_parent;//父文件系统
+    struct dentry *mnt_mountpoint;//安装点的目录项
+    struct dentry *mnt_root;//该文件系统的根目录项
+    struct super_block *mnt_sb;//该文件系统的超级块
+    struct list_head mnt_mounts;
+    struct list_head mnt_child;
+    int mnt_flags;
+    char *mnt_devname;
+    struct list_head mnt_list;
+    ......
+}
+```
+
+理清文件系统和所有其他安装点间的关系，是维护所有安装点链表中最复杂的工作。所以vfsmount结构体中维护的各种链表就是为了能够跟踪这些关联信息。
+
+**和进程相关的数据结构**
+
+file_struct定义在<linux/fdtable.h>，由进程描述符中files指向，所有与单个进程相关的信息（如打开的文件及文件描述符）都包含在其中。
+
+fs_struct定义在<linux/fs_struct.h>，由进程描述符中fs指向，包含文件系统和进程相关的信息，该结构包含了当前进程的当前工作目录和根目录。
+
+namespace定义在<linux/mmt_namespace.h>，由进程描述符中mmt_namespace指向
+
+系统能够随机访问固定大小数据片（chunks）的硬件设备称作块设备，最常见的是硬盘，除此之外，还有软盘驱动器、蓝光光驱和闪存等许多其他块设备，它们都是以安装文件系统的方式使用的---这也是块设备一般的访问方式。
+
+另一种基本的设备类型是字符设备。字符设备按照字符流的方式被有序访问，像串口和键盘就属于字符设备。对于这两种设备。区别在于是否可以随机访问数据。
+
+块设备中最小的可寻址单元是扇区，一般为2的整数倍，最常见的是512字节。扇区是所有块设备的基本单元---块设备无法对比它还小的单元进行寻址和操作。
+
+```c++
+SYSCALL_DEFINE3(open,const char __user,filename,int flags,umode_t,mode) {
+    return do_sys_open(AT_FDCWD,filename,flags,mode);
+}
+long do_sys_open(int dfd,const char __user *filename,int flags,umode_t mdoe) {
+    ....
+    //task_struct->files->fd_array，默认情况下，0代表标准输入，1代表标准输出，2代表标准错误输出。
+    //每一项都是指向struct file的指针
+    fd = get_unsed_fd_flags(flags);
+    if(fd >= 0){
+        //首先初始化了struct nameidata这个结构，nameidata->path
+        struct file *f = do_filp_open(dfd,tmp,&op);
+        if(IS_ERR(f)){
+            put_unused_fd(fd);
+            fd = PTR_ERR(f);
+        }else{
+            fsnotity_open(f);
+            fd_install(fd,f);
+        }
+    }
+    putname(tmp);
+    return fd;
+}
+
+struct file *do_filp_open(int dfd,struct filename *pathname,const struct open_flags *op) {
+    ......
+    set_nameidata(&nd,dfd,pathname);
+    filp = path_openat(&nd,op,flags | LOOKUP_RCU);
+    ......
+    restore_nameidata();
+    return filp;
+}
+
+static struct file *path_openat(struct nameidata *nd,const struct open_flags *op,unsigned flags) {
+	//生成一个file结构
+    file = get_empty_filp();
+	//初始化nameidata
+    s = path_init();
+    //link_path_walk对路径名进行查找
+    //do_last获取文件对应的inode对象，并且初始化file对象
+    while(!(error = link_path_walk(s,nd))&&
+         (error = do_last(nd,file,op,&opened)) > 0) {
+        
+    }
+    terminate_walk(nd);
+    return file;
+}
+
+static int do_last(struct nameidata *nd,struct file *file，const struct open_flags *op,int *opened) {
+	//到dcache中找
+    error =	lookup_fast(nd,&path,&inode,&seq);
+    ........
+        //如果缓存中没有，会创建一个新的dentry，并调用上级目录的inode->inode_operations->lookup
+	    error = lookup_open(nd,&path,file,op,got_write,opened);
+    ........
+    //真正打开文件,最重要的一件事就是调用f_op->open,将文件信息填写到struct file这个结构
+    error = vfs_open(&nd->path,file,current_cred());
+}
+```
+
+![image-20220221000501099](os.assets/image-20220221000501099.png)
+
+read系统调用
+
+```c++
+SYSCALL_DEFINE3(read,unsigned int,fd,char __user *,buf,size_t,count) {
+    struct fd f = fdget_pos(fd);
+    ....
+    loff_t pos = file_pos_read(f.file);
+    ....
+    ret = vfs_read(f.file,buf,count,&pos);
+}
+
+ssize_t __vfs_read(struct file *file,char __user *buf,size_t count,loff_t *pos) {
+    if (file->f_op->read)
+      return file_op->read(file,buf,count,pos);
+    else if (file->f_op->read_iter)
+        return new_sync_read(file,buf,count,pos);
+    else 
+        return -EINVAL;
+}
+```
+
+**ext4文件系统层**
+
+```c++
+const struct file_operations ext4_file_operations = {
+......
+    .read_iter = ext4_file_read_iter,
+    .write_iter = ext4_file_write_iter
+......
+}
+```
+
+ext4_file_read_iter会调用generic_file_read_iter,ext4_file_write_iter会调用__generic_file_write_iter
+
+```c++
+ssize_t generic_file_read_iter(struct kiocb *iocb,struct iov_iter *iter) {
+    if(iocb->ki-flags & IOCB_DIRECT) {
+        struct address_space *mapping = file->f_mapping;
+        //direct
+        retval = mapping->a_pos->direct_IO(iocb,iter);
+    }
+    retval = generic_file_buffered_read(iocb,iter,retval);
+}
+
+ssize_t __generic_file_write_iter(struct kiocb *iocb,struct iov_iter * from) {
+    if(iocb->ki_flags & IOCB_DIRECT) {
+        written = generic_file_direct_write(iocb,from);
+    }else{
+        written = generic_perform_write(file,from,iocb->ki_pos);
+    }
+}
+```
+
+根据是否使用内存作为缓存，可以把文件I/O操作分为两种类型：
+
+* 缓存I/O，大多数文件系统默认I/O操作都是缓存I/O。对于读，操作系统会先检查，内核的缓冲区有没有必要的数据，如果已经缓存了，直接从缓存返回，否则从磁盘读取，然后缓存；对于写，操作系统会先将数据从用户空间复制到内核空间的缓存中。
+* 直接I/O，直接访问磁盘数据
+
+**带缓存的写入操作**
+
+```c++
+ssize_t generic_perform_write(struct file *file,struct iov_iter *i,loff_t pos) {
+    struct address_space *mapping = file->f_mapping;
+    const struct address_space_operations *a_pos = mapping->a_pos;
+    do{
+        struct page *page;
+        unsigned long offset;
+        unsigned long bytes;
+        status=a_ops->write_begin(file,mapping,pos,bytes,flags,&page,&fsdata);
+		//将写入的内容从用户态拷贝到内核态的页中
+        copied=iov_iter_copy_from_user_atomic(page,i,offset,bytes);
+        flush_dcache_page(page);
+        status=a_ops->write_end(file,mapping,pos,bytes,copied,page,fsdata);
+        pos+=copied;
+        written+=copied;
+        //看脏页是否太多，是否需要写回到磁盘
+        balance_dirty_pages_ratelimited(mapping);
+    }while(iov_iter_count(i))
+}
+```
+
+内核中，缓存以页为单位放到内存。file有个struct address_space用于关联文件和内存，就是在这个结构里，有一棵树，用于保存所有与这个文件相关的缓存页。 
+
+* 块设备，将信息存储在固定大小的块中，
+* 字符设备，发送接受的都是字节流，不用考虑任何块结构，没有办法寻址
+
+由于块设备传输的数据量比较大，控制器往往有缓冲区，cpu与**设备控制器**的寄存器和数据缓冲区进行通信的方式：
+
+* 每个控制寄存器被分配一个I/O端口，可以通过特殊的汇编指令（例如in/out，类似的指令）操作这些寄存器
+* 数据缓冲区，可内存映射I/O，可以分配一段内存给它，就像读写内存一样读写数据缓冲区。ioremap
+
+控制器的寄存器一般都会有状态标志位，可以通过检测状态标志位，来确定输入或者输出操作是否完成。第一种方式为轮询等待，第二种方式为中断。为了响应中断，一般会有一个**硬件的中断控制器**，当设备完成任务后触发中断到**中断控制器**，中断控制器就通知CPU。可分为**软中断**和**硬中断**。
+
+有的设备需要读取或者写入大量数据，这种类型的设备就需要支持DMA功能。CPU只需要对DMA控制器下指令，说想要读取多少数据，放在内存的某个地方就可以了，接下来DMA控制器就会发指令给磁盘控制器，读取磁盘的数据到指定的内存位置，传输完成，DMA控制器发中断通知CPU指令完成，CPU就可以直接用内存里现成的数据。DMA区域
+
+**设备控制器**不属于操作系统的一部分。但是设备驱动程序属于操作系统的一部分。操作系统的内核代码可以像调用本地代码一样调用设备驱动程序的代码，**而驱动程序的代码需要发出特殊的面向设备控制器的指令，才能操作设备控制器**。
+
+一般的流程：设备驱动程序初始化的时候，要先注册一个该设备的中断处理函数。中断的时候，触发的函数是do_IRQ,这个函数是中断处理的统一入口。
+
+对于块设备，在驱动程序之上，文件系统之下，还需要一层**通用设备层**，里面的逻辑和硬盘设备没有什么关系，是通用的逻辑。
+
+**用文件系统接口屏蔽驱动程序的差异**
+
+所有设备在/dev/下创建一个特殊的设备文件，这个特殊设备文件也有inode，它不关联到硬盘或其他任何存储介质上的数据，而是建立了与某个设备驱动程序的连接。
+
+假设/dev/sdb,这是一个设备文件，这个文件本身和硬盘上的文件系统没有任何关系，本身也不对应硬盘的上的任何一个文件，/dev/sdb其实是在一个特殊的文件系统devtmpfs中
+
+主设备号定位设备驱动程序，次设备号作为参数传递给启动程序，选择相应的单元
+
+Linux的驱动程序已经被写成和操作系统有标准接口的代码，可以看成一个标准的内核模块。在linux里，安装驱动程序，其实就是加载一个内核模块。
+
+lsmod   insmod  mknod可以手动加载驱动
+
+sysfs和udev服务，当一个设备新插入系统时，内核会检测到这个设备，并会创建一个内核对象kobject。这个对象通过sysfs文件系统展现到用户层，同时内核还向用户空间发送一个热插拔消息。udevd会监听这些信息，在/dev中创建对应的文件。
+
+**构建一个内核模块**：
+
+第一，头文件部分，一般都有<linux/module.h>和<linux/init.h>
+
+第二，定义一些函数，处理内核模块的主要逻辑，例如打开、关闭、中断
+
+第三，定义一个file_operations结构，设备想被文件系统的接口操作就需要定义
+
+第四，定义整个模块的初始化和退出函数
+
+第五，调用module_init和module_exit
+
+第六，声明license，调用MODULE_LICENSE
+
+lp.c的初始化函数:
+
+```c++
+static int __init lp_init(void) {
+    if(register_chrdev(LP_MAJOR,"lp",&lp_fpos)) {
+        printk(KERN_ERR "lp:unable to get major %d\n",LP_MAJOR);
+        return -EIO;
+    }
+}
+
+int __register_chrdev(unsigned int major,unsigned int baseminor,
+                      unsigned int count,const char *name,const struct file_operations *fops)
+{
+    struct char_device_struct *cd;
+    struct cdev *cdev;
+    int err = -ENOMEM;
+    cd = __register_chrdev_region(major,baseminor,count,name);
+    cdev = cdev_alloc();
+    cdev->owner = fops->owner;
+    cdev->ops = fops;
+    kobject_set_name(&cdev->kobj,"%s",name);
+    //将这个字符设备添加到内核中一个kobj_map的结构，来统一管理所有字符设备
+    err = cdev_add(cdev,MKDEV(cd->major,baseminor),count);
+    cd->cdev = cdev;
+    return major? 0 : cd->major;
+}
+int cdev_add(struct cdev *p,dev_t dev,unsigned count){
+    int error;
+    p->dev = dev;
+    p->count = count;
+    error = kobj_map(cdev_map,dev,count,NULL,exact_match,exact_lock,p);
+    kobject_get(p->kobj.parent);
+    return 0;
+}
+```
+
+**mknod系统调用**
+
+```c++
+SYSCALL_DEFINE3(mknod,const char __user *,filename,umode_t,mode,unsigned,dev){
+    return sys_mknodat(AT_FDCWD,filename,mode,dev);
+}
+SYSCALL_DEFINE4(mknodat,int,dfd,const char __user *,filename,umode_t,mode,unsigned,dev){
+    struct dentry *dentry;
+    struct path path;
+    dentry = user_path_create(dfd,filename,&path,lookup_flags);
+    switch(mode & S_IFMT){
+        case S_IFCHR:case S_IFBLK:
+            error = vfs_mknod(path.dentry->d_inode,dentry,mode,new_decode_dev(dev));
+            break;
+    }
+}
+```
+
+vfs_mknod会调用相应文件系统的inode_operations
+
+```c++
+/dev-devtmpfs
+static struct dentry *dev_mount(struct file_system_type *fy_type,int flags,const char *dev_name,void *data)
+{
+#ifdef CONFIG_TMPFS
+	return mount_single(fs_type,flags,data,shmem_fill_super);
+#else
+	return mount_single(fs_type,flags,data,ramfs_fill_super);
+#endif
+}
+
+static struct file_system_type dev_fs_type = {
+    .name = "devtmpfs",
+    .mount = dev_mount,
+    .kill_sb = kill_litter_super,
+}
+
+static const struct inode_operations ramfs_dir_inode_operations = {
+    .mknod = ramfs_mknod,
+}
+
+static const struct inode_operations shmem_dir_inode_operations = {
+    #ifdef CONFIG_TMPFS
+    .mknod = shemem_mknod,
+}
+这两个实现都会调用init_specail_inode
+void init_special_inode(struct inode *inode,umode_t mode,dev_t rdev){
+    inode->i_mode = mode;
+    if(S_ISCHR(mode)){
+        inode->i_fop = &def_chr_fops;
+        inode->i_rdev = rdev;
+    }else if(S_ISBLK(mode)){
+        inode->i_fop = &def_blk_fops;
+        inodec->i_redv = rdev;
+    }else if(S_ISFIFO(mode)){
+        inode->i_fop = &pipefifo_fops;
+    }else if(S_ISSOCK(mode));
+}
+
+static int chrddev_open(struct inode *inode,struct file *filp){
+    const struct file_operations *fpos;
+    struct cdev *p;
+    struct cdev *new = NULL;
+    int ret = 0;
+    p = inode->i_cdev;
+    if(!p){
+        struct kobject *kobj;
+        int idx;
+        kobj = kobj_lookup(cdev_map,inode->i_rdev,&idx);
+        new = container_of(kobj,struct cdev,kobj);
+        p = inode->i_cdev;
+        if(!p){
+            inode->i_cdev = p = new;
+            list_add(&inode->i_devices,&p->list);
+            new = NULL;
+        }
+    }
+    fops = fops_get(p->ops);
+    replace_fops(filp,fops);
+    if(filp->f_op->open){
+        ret = filp->f_op->open(inode,filp);
+    }
+}
+```
+
+**使用IOCTL控制设备**
+
+ioctl是一个系统调用，可以通过这个调用做一些特殊的I/O操作
+
+```c++
+
+SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
+{
+  int error;
+  struct fd f = fdget(fd);
+......
+  error = do_vfs_ioctl(f.file, fd, cmd, arg);
+  fdput(f);
+  return error;
+}
 
 
+int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
+       unsigned long arg)
+{
+  int error = 0;
+  int __user *argp = (int __user *)arg;
+  struct inode *inode = file_inode(filp);
 
 
+  switch (cmd) {
+......
+  case FIONBIO:
+    error = ioctl_fionbio(filp, argp);
+    break;
 
 
+  case FIOASYNC:
+    error = ioctl_fioasync(fd, filp, argp);
+    break;
+......
+  case FICLONE:
+    return ioctl_file_clone(filp, arg, 0, 0, 0);
 
 
+  default:
+    if (S_ISREG(inode->i_mode))
+      error = file_ioctl(filp, cmd, arg);
+    else
+      //最终会调用file_operations的unlocked_ioctl
+      error = vfs_ioctl(filp, cmd, arg);
+    break;
+  }
+  return error;
+```
 
+注册中断和处理中断：
 
+```c++
+static int logibm_open(struct input_dev) {
+	//注册中断
+    if(request_irq(logbim_interrupt,0,"logibm",NULL)) {
+        return -EBUSY;
+    }
+}
 
+static irqreturn_t logibm_interrupt(int irq,void *dev_id) {
+    //进行一些处理
+    return IRQ_HANDLED;
+}
 
+static request _irq(....) {
+    return request_threaded_irq(...);
+}
 
+int request_threaded_irq(unsigned int irq,irq_handler_t handler,irq_handler_t thread_fn,unsigned long irqflags,const char *devname,void *dev_id) {
+    struct irqaction *action;
+    struct irq_desc *desc;
+    int retval;
+    //根据中断号查找中断描述结构
+    desc = irq_to_desc(irq);
+    action = kzalloc(sizeof(struct irqaction),GFP_KERNEL);
+    action->handler=handler;
+    action->thread_fn;
+    action->flags=irqflags;
+    action->name=devname;
+    action->dev_id=dev_id;
+    retval=__setup_irq(irq,desc,action);
+}
 
+struct irq_desc {
+    struct irqaction *action;/**irq action list*/
+    struct module *owner;
+    const char *name;
+}
 
+struct irqaction {
+    irq_handler_t handler;
+    void *dev_id;
+    void __percpu *percpu_dev_id;
+    struct irqaction *next;
+    //如果中断函数在单独的线程执行，thread_fn,thread
+    irq_handler_t thread_fn;
+    struct task_struct *thread;
+    struct irqaction *seconfary;
+    unsigned int irq;
+    unsigned int flags;
+    unsigned long thread_flags;
+    unsigned long thread_mask;
+    const char *name;
+    struct proc_dir_entry *dir;
+}
 
+#idef CONFIG_SPARSE_IRQ
+static RADIX_TREE(irq_desc_tree,GFP_KERNEL);
+struct irq_desc *irq_to_desc(unsigned int irq){
+    return radix_tree_lookup(&irq_desc_tree,irq);
+}
+#else
+struct irq_desc irq_desc[NR_IRQS] __cacheline_aligned_in_smp = {
+    [0...NR_IRQS-1]={}
+}
+struct irqdesc *irq_to_desc(unsigned int irq){
+    return (irq < NR_IRQS) ? irq_desc + irq : NULL;
+}
+#endif
 
+static int _setup_irq(unsigned int irq,struct irq_desc *desc,struct irqaction *new) {
+    struct irqaction *old,**old_ptr;
+    unsigned long flags,thread_mask = 0;
+    int ret,nested,shared = 0;
+    new->irq=irq;
+   	//create a handler when a thread function is supplied and the interrupt does not nest into another interrupt thread
+    if(new->threads_fn && !nested) {
+        ret = setup_irq_thread(new,irq,false);
+    }
+    old_ptr = &desc->action;
+   	old = *old_ptr;
+    if(old){
+        do{
+            thread_mask |=old->thread_mask;
+            old_ptr = &old->next;
+            old = *old_ptr;
+        }while(old)
+    }
+    *old_ptr=new;
+    if(new->thread){
+        wake_up_process(new->thread);
+    }
+}
 
+static int setup_irq_thread(struct irqaction *new,unsigned int irq,bool secondary) {
+    struct task_struct *t;
+    struct sched_param param = {
+        .sched_priority = MAX_USER_RT_PRIO/2;
+    }
+    t = kthread_create(irq_thread,new,"irq/%d-%s",irq,new->name);
+    sched_setscheduler_nocheck(t,SCHED_FIFO,&param);
+    get_task_struct(t);
+    new->thread=t;
+    return 0;
+}
+```
 
+中断发生的流程：
 
+* 外部设备给中断控制器发送**物理中断信号**
+* 中断控制器将**物理中断信号**转换为中断向量**interrupt vector**，发给CPU
+* CPU都会有个中断向量表，根据**interrupt vector**调用**IRQ**函数
+* **IRQ**函数中，将**interrupt vector**转化为**抽象中断层的中断信号irq**
 
+数据结构**interrupt vector**的解析
 
+```css
+Linux IRQ vector layout.
 
+There are 256 IDT entires(per CPU - each entry is 8 bytes)which can be defined by Linux.They are used as a jump table by the CPU
+when a gived vector is triggered - by a CPU-external,CPU-internal or software-triggered event.
 
+Linux sets the kernel code address each entry jumps to early during bootup,and never changes them.This is the general layout of the IDT entries:
+Vectors 0...  31:system traps and exceptions - hardcoded events
+Vectors 32...127:device interrupts
+Vectors 128     :legacy int80 syscall interface
+Vectors 129...  :INVALIDATE_TLB_VECTOR_START-1 except 204:device interrupts
+Vectors INVALIDATE_TLB_VECTOR_START...255:special interrupts
 
+64-bit x86 has per CPU IDT tables,32-bits has one shared IDT table.
 
+arch/x86/kernel/traps.c中
+gate_desc_idt_table[NR_VECTORS] __page_aligned_bss;
 
+start_kernel->trap_init，其中有很多set_intr_gate,其最终都会调用到_set_gate,在其中设置中断处理函数并放到中断向量表中
+设置好前32位中断后，会单独设置IA32_SYSCALL_VECTOR,也即128
+最后会把idt_table放到一个固定的虚拟地址
+start_kernel调用完trap_init后，还会调用init_IRQ->native_IRQ来初始化其他设备中断
+void __init native_init_IRQ(void){
+    int i;
+    i=FIRST_EXTERNA_VECTOR;
+    #ifndef CONFIG_X86_LOCAL_APIC
+    #define first_system_vector NR_VECTORS
+    #endif
+    for_each_clear_bit(i,used_vectors,first_system_vector) {
+        set_intr_gate(i,irq_entries_start + 8*(i-FIRST_EXTERNAL_VECTOR));
+    }
+}
 
+irq_entires_start是个表，定义了FIRST_SYSTEM_VECTOR - FIRST_EXTERNAL_VEXTOR项。每一项都是中断处理函数，会跳到common_interrupt执行，调用完毕后，就从中断返回，调用完毕后，会从中断返回，这里会区分返回用户态还是内核态
 
+//do_IRQ hadles all normal device IRQ's(the special SMP cross-CPU interrupts have their own specific hadlers)
+__visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs) {
+    struct pt_regs *old_regs = set_irq_regs(regs);
+    struct irq_desc *desc;
+    unsigned vector = ~regs->orig_ax;
+    desc = __this_cpu_read(vector_irq[vector])
+    if(!handle_irq(desc,regs)){
+        
+    }
+    set_irq_regs(old_regs);
+    return 1;
+}
+vector_irq 这个Per CPU变量负责维护每个CPU对应中断控制器传递的物理中断号与全局统一的虚拟中断号的对应关系（在系统初始化调用_assign_irq_vector,将虚拟中断号分配到某个CPU上的中断向量）
 
+do_IRQ->handle_irq->generic_handle_irq_desc,然后会调用irq_desc的handle_irq->__handle_irq_event_percpu
+irqreturn_t __handle_irq_event_percpu(struct irq_desc *desc,unsigned int *flags) {
+    irqreturn_t retval = IRQ_DONE;
+    unsigned int irq = desc->irq_data.irq;
+    struct irqaction *action;
+    record_irq_time(desc);
+    for_each_action_of_desc(desc,action) {
+        irqreturn_t desc;
+        res = action->handler(irq,action->dev_id);
+        switch(res){
+            case IRQ_WAKE_THREAD:
+                __irq_wake_thread(desc,action);
+            case IRQ_HANDLED:
+                *flags|=action->flags;
+            	break;
+            default:
+                break;
+        }
+        retval |= res;
+    }
+}
+```
 
+块设备在mknod命令会根据主/次设备号创建一个特殊inode，其中打开设备文件用的是blkdev_open,里面调用blkdev_get打开这个设备
 
+将一个块设备mount成ext4文件系统：
 
+```c++
+ext_mount->mount_bdev {
+    //找到设备并打开它
+    block_device bdev=blkdev_get_by_path();
+	//根据打开的设备文件，填充ext4文件系统
+    s=sget(bdev);   
+}
+blkdev_get_by_path{
+    block_device bdev = lookup_dev();
+    blkdev_get(bdev);
+}
 
+blkdev_get_by_path->lookup_dev{
+    kern_path(pathname,LOOKUP_FOLLOW,&path);
+    bdev=bd_acquire(inode);
+}
+//bd根据传进来的dev_t在blockdev_superblock中找到bdev中的inode（根据devtmpfs中inode找到bdev中inode）
+bd_acquire->bdget(inode->i_rdev);
+```
 
+block_device结构：
 
-
-
-
-
-
-
-
+```c++
+struct block_device {
+    dev_t bd_dev;
+    int bd_openers;
+    struct super_block * bd_super;
+    struct block_device * bd_contains;
+    unsigned bd_block_size;
+    struct hd_struct * bd_part;
+    unsigned bd_part_count;
+    int bd_invalidated;
+    struct gendisk *bd_disk;
+    struct request_queue * bd_queue;
+    struct backing_dev_info *bd_bdi;
+    struct list_head bd_list;
+}
+```
 
 
 
