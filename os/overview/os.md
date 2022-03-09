@@ -3261,6 +3261,11 @@ blkdev_get_by_path->lookup_dev{
 }
 //bd根据传进来的dev_t在blockdev_superblock中找到bdev中的inode（根据devtmpfs中inode找到bdev中inode）
 bd_acquire->bdget(inode->i_rdev);
+//bdev系统中的inode和block_device进行关联
+struct bdev_inode {
+    struct block_device bdev,
+    struct inode vfs_inode;
+}
 ```
 
 block_device结构：
@@ -3270,16 +3275,52 @@ struct block_device {
     dev_t bd_dev;
     int bd_openers;
     struct super_block * bd_super;
+	//整块设备的block_device
     struct block_device * bd_contains;
     unsigned bd_block_size;
     struct hd_struct * bd_part;
     unsigned bd_part_count;
     int bd_invalidated;
+    //整块块设备
     struct gendisk *bd_disk;
     struct request_queue * bd_queue;
     struct backing_dev_info *bd_bdi;
     struct list_head bd_list;
 }
+struct gendisk {
+    //主设备号
+    int major;
+    //第一个分区的的从设备号
+    int first_minor;
+    //分区数
+    int minors;
+    //磁盘块设备名称
+    char disk_name[DISK_NAME_LEN];
+    char *(*devnode)(struct gendisk *gd,umode_t *mode);
+	//hd_struct数组
+    struct disk_part_tbl __rcu *part_tbl;
+    struct hd_struct part0;
+	//对于这个块设备的各种操作
+    const struct block_device_operations *fpos;
+	//这个块设备上的请求队列
+    struct request_queue *queue;
+    void *private_data;
+    int flags;
+    struct kobject *slave_dir;
+}
+struct hd_struct {
+	sector_t start_sect;
+    sector_t nr_sects;
+    struct device __dev;
+    struct kobject *holder_dir;
+    int policy,partno;
+    struct partition_meta_info *info;
+    struct disk_stats;
+    struct percpu_ref ref;
+    struct rcu_head rcu_head;
+}
+
+block_device 既可以表示整个块设备，也可以表示某个分区
 ```
 
 
@@ -3295,6 +3336,26 @@ struct block_device {
 
 
 
+
+
+
+
+
+**虚拟化**
+
+为了区分内核态和用户态，CPU专门设置了4个特权等级，0（内核态），1，2，3（用户态）
+
+三种虚拟化方式：
+
+* **完全虚拟化**，虚拟化软件模拟假的的CPU、内存、网络、硬盘
+* **硬件辅助虚拟化**，Intel的VT -x和AMD-V从硬件层面提供**新的标志位**，对于虚拟机内核，只要将标志位设置为虚拟机状态，就可以直接在CPU上执行大部分指令，而不需要**虚拟化软件转述**
+* **半虚拟化**,Guest OS加载特殊的驱动，IO操作时在驱动里可以采用排队、缓存的方式加速效率
+
+服务器上的虚拟化软件，多使用qemu，单纯使用qemu，采用的是**完全虚拟化的模式**
+
+Qemu将KVM整合，将有关CPU的指令叫给内核模块来做，就是qemu-kvm，（硬件辅助虚拟化）
+
+Qemu采用半虚拟化的方式，让Guest OS加载特殊的驱动，如网络需要加载virtio_net，存储需要加载virtio_blk,数据会直接发送给这些特殊驱动，经过特殊处理（例如排队、缓存、批量处理等性能优化方式），最终发送给真正的硬件。
 
 
 
