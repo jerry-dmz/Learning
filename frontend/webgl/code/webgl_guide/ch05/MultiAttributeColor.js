@@ -11,14 +11,21 @@ var VSHADER_SOURCE =
   '}\n';
 
 // Fragment shader program
+//通过varing变量从顶点着色器向片元着色器传输数据
 var FSHADER_SOURCE =
-  '#ifdef GL_ES\n' +
-  'precision mediump float;\n' + // Precision qualifier (See Chapter 6)
-  '#endif GL_ES\n' +
+  'precision mediump float;\n' +
   'varying vec4 v_Color;\n' +    // Receive the data from the vertex shader
   'void main() {\n' +
   '  gl_FragColor = v_Color;\n' +
   '}\n';
+// var FSHADER_SOURCE =
+//   '#ifdef GL_ES\n' +
+//   'precision mediump float;\n' + // Precision qualifier (See Chapter 6)
+//   '#endif GL_ES\n' +
+//   'varying vec4 v_Color;\n' +    // Receive the data from the vertex shader
+//   'void main() {\n' +
+//   '  gl_FragColor = v_Color;\n' +
+//   '}\n';
 
 function main() {
   // Retrieve <canvas> element
@@ -57,14 +64,14 @@ function main() {
 function initVertexBuffers(gl) {
   var verticesColors = new Float32Array([
     // Vertex coordinates and color
-     0.0,  0.5,  1.0,  0.0,  0.0, 
-    -0.5, -0.5,  0.0,  1.0,  0.0, 
-     0.5, -0.5,  0.0,  0.0,  1.0, 
+    0.0, 0.5, 1.0, 0.0, 0.0,
+    -0.5, -0.5, 0.0, 1.0, 0.0,
+    0.5, -0.5, 0.0, 0.0, 1.0,
   ]);
   var n = 3; // The number of vertices
 
   // Create a buffer object
-  var vertexColorBuffer = gl.createBuffer();  
+  var vertexColorBuffer = gl.createBuffer();
   if (!vertexColorBuffer) {
     console.log('Failed to create the buffer object');
     return false;
@@ -86,7 +93,7 @@ function initVertexBuffers(gl) {
 
   // Get the storage location of a_Position, assign buffer and enable
   var a_Color = gl.getAttribLocation(gl.program, 'a_Color');
-  if(a_Color < 0) {
+  if (a_Color < 0) {
     console.log('Failed to get the storage location of a_Color');
     return -1;
   }

@@ -100,7 +100,7 @@ function draw(gl, n, currentAngle, modelMatrix, u_ModelMatrix) {
   // Set the rotation matrix
   modelMatrix.setRotate(currentAngle, 0, 0, 1); // Rotation angle, rotation axis (0, 0, 1)
  
-  // Pass the rotation matrix to the vertex shader
+  // Pass the rotation matrix to the vertex shader,根据时间改变变换矩阵，就可以实现变换
   gl.uniformMatrix4fv(u_ModelMatrix, false, modelMatrix.elements);
 
   // Clear <canvas>

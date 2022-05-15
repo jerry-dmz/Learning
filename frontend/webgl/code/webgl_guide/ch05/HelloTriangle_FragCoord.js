@@ -7,6 +7,7 @@ var VSHADER_SOURCE =
   '}\n';
 
 // Fragment shader program
+//
 var FSHADER_SOURCE =
   'precision mediump float;\n' +
   'uniform float u_Width;\n' +
