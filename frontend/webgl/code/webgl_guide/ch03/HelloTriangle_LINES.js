@@ -43,12 +43,21 @@ function main() {
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   // Draw the rectangle
+  /**
+   * 点(v1,v2,v3,v4,v5)
+   * gl.LINES:(v1,v2)、(v3,v4)  v5被舍弃
+   * gl.LINES_STRIP:(v1,v2)、(v2,v3)、(v3,v4)、(v4,v5)
+   * gl.LINES_LOOP:(V1,V2)、(v2,v3)、(v3,v4)、(v4,v5)、(v5,v1)
+   * gl.TRIANGLES:(V1,V2,V3)、(v4,v5,v6)
+   * gl.TRIANGLES_STRIP:(V1,V2,V3)、(V3,V2,V4)、(V3,V4,V5)
+   * gl.TRIANGLE_FAN:(V1,V2,V3)、(V1,V3,V4)、(V1,V4,V5)
+   */
   gl.drawArrays(gl.LINES, 0, n);
 }
 
 function initVertexBuffers(gl) {
   var vertices = new Float32Array([
-    0, 0.5,   -0.5, -0.5,   0.5, -0.5
+    0, 0.5, -0.5, -0.5, 0.5, -0.5
   ]);
   var n = 3; // The number of vertices
 
@@ -59,9 +68,9 @@ function initVertexBuffers(gl) {
     return -1;
   }
 
-　// Bind the buffer object to target
+  // Bind the buffer object to target
   gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-　// Write date into the buffer object
+  // Write date into the buffer object
   gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
 
   var a_Position = gl.getAttribLocation(gl.program, 'a_Position');

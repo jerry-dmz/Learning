@@ -1,5 +1,12 @@
 // ColoredPoint.js (c) 2012 matsuda
 // Vertex shader program
+/**
+ * js代码往WebGL中传值:
+ * 方式1：
+ * 获取变量位置:gl.getAttribLocation、gl.getUniformLocation
+ * 设置值:gl.vertexAttrib3f、gl.uniform4f
+ * 方式2：缓冲区
+ */
 var VSHADER_SOURCE =
   'attribute vec4 a_Position;\n' +
   'void main() {\n' +
@@ -8,9 +15,12 @@ var VSHADER_SOURCE =
   '}\n';
 
 // Fragment shader program
+/**
+ * precision mediump float 指定默认精度
+ */
 var FSHADER_SOURCE =
   'precision mediump float;\n' +
-  'uniform vec4 u_FragColor;\n' +  // uniform変数
+  'uniform vec4 u_FragColor;\n' +  // uniform变量
   'void main() {\n' +
   '  gl_FragColor = u_FragColor;\n' +
   '}\n';
@@ -39,7 +49,7 @@ function main() {
     return;
   }
 
-  // Get the storage location of u_FragColor
+  //获取uniform变量
   var u_FragColor = gl.getUniformLocation(gl.program, 'u_FragColor');
   if (!u_FragColor) {
     console.log('Failed to get the storage location of u_FragColor');
@@ -47,7 +57,7 @@ function main() {
   }
 
   // Register function (event handler) to be called on a mouse press
-  canvas.onmousedown = function(ev){ click(ev, gl, canvas, a_Position, u_FragColor) };
+  canvas.onmousedown = function (ev) { click(ev, gl, canvas, a_Position, u_FragColor) };
 
   // Specify the color for clearing <canvas>
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -63,8 +73,8 @@ function click(ev, gl, canvas, a_Position, u_FragColor) {
   var y = ev.clientY; // y coordinate of a mouse pointer
   var rect = ev.target.getBoundingClientRect();
 
-  x = ((x - rect.left) - canvas.width/2)/(canvas.width/2);
-  y = (canvas.height/2 - (y - rect.top))/(canvas.height/2);
+  x = ((x - rect.left) - canvas.width / 2) / (canvas.width / 2);
+  y = (canvas.height / 2 - (y - rect.top)) / (canvas.height / 2);
 
   // Store the coordinates to g_points array
   g_points.push([x, y]);
@@ -81,7 +91,7 @@ function click(ev, gl, canvas, a_Position, u_FragColor) {
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   var len = g_points.length;
-  for(var i = 0; i < len; i++) {
+  for (var i = 0; i < len; i++) {
     var xy = g_points[i];
     var rgba = g_colors[i];
 
