@@ -319,7 +319,7 @@ gl.drawElements--通过顶点索引绘制,gl.ELEMENT_ARRAY_BUFFER,管理具有�
 
 [webGL、webGPU、封装、渲染引擎 three.js、游戏引擎，定位是游戏开发，在前面的渲染引擎基础上，还提供了骨骼动画、物理引擎、AI、GUI 等功能，以及可视化编辑器来设计关卡，支撑大型游戏_红尘修心，三生有幸。的博客-CSDN博客_webgl能做大型游戏么](https://blog.csdn.net/weixin_35597398/article/details/119362035)
 
-
+[计算机图形学入门总结！ - 云+社区 - 腾讯云 (tencent.com)](https://cloud.tencent.com/developer/article/1815320)
 
 ### 这些矩阵的推导，数学原理的学习
 
