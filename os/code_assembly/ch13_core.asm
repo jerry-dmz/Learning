@@ -228,7 +228,7 @@ allocate_memory:                            ;分配内存
          mov ecx,[ram_alloc]                ;返回分配的起始地址
 
          mov ebx,eax
-         and ebx,0xfffffffc
+         and ebx,0xfffffffc                 ;0xfffffff_1100
          add ebx,4                          ;强制对齐 
          test eax,0x00000003                ;下次分配的起始地址最好是4字节对齐
          cmovnz eax,ebx                     ;如果没有对齐，则强制对齐 
@@ -257,7 +257,7 @@ set_up_gdt_descriptor:                      ;在GDT内安装一个新的描述�
          ;将GDT寄存器的基地址和边界信息保存到pgdt这个内存位置
          sgdt [pgdt]                        ;以便开始处理GDT
 
-         mov ebx,mem_0_4_gb_seg_sel
+         mov ebx,mem_0_4_gb_seg_sel TODO:
          mov es,ebx
 
          movzx ebx,word [pgdt]              ;GDT界限 
@@ -352,8 +352,97 @@ section core_data vstart=0  ;系统核心数据段
     cpu_brnd1   db 0x0d,0x0a,0x0d,0x0a,0
 
 section core_code vstart=0
+;加载并重定位用户程序，输入:ESI-起始逻辑扇区号，返回-ax指向用户程序头部段选择子
 load_relocate_program:
-    TODO:
+    push eax
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    push ds
+    push es
+
+    mov eax,core_data_seg_sel
+    mov ds,eax
+
+    mov eax,esi ;esi在调用load_relocate_program处设置
+    mov ebx,core_buf
+    call sys_routine_seg_sel:read_hard_disk_0
+    
+    mov eax,[core_buf]  ;开始两个字节正好定义了程序长度
+    mov ebx,eax
+    and ebx,0xfffffe00  ;与512字节对齐,最低端9个如果都是0，则能被512整除
+    add ebx,512         ;上一个and操作，将低9位的都置为了0，此处加上512字节
+    test eax ,0x000001ff;如果等于0，则正好是512个字节
+    cmovnz eax,ebx      ;此处不使用jnz指令，主要是为了不打断流水线。
+
+    mov ecx,eax         ;实际要申请的内存数量
+    call sys_routine_seg_sel:allocate_memory
+    mov ebx,ecx         ;ecx返回的是分配的线性地址，
+    push ebx
+    xor edx,edx
+    mov ecx,512
+    div ecx     ;eax/512,得到要读多少个扇区
+    mov ecx,eax
+    mov eax,mem_0_4_gb_seg_sel  ;0~4GB数据段
+    mov ds,eax
+    mov eax,esi     ;起始扇区号
+
+.b1:
+    call sys_routine_seg_sel:read_hard_disk_0
+    inc eax
+    loop .b1
+
+         ;建立程序头部段描述符
+         pop edi                            ;恢复程序装载的首地址 
+         mov eax,edi                        ;程序头部起始线性地址
+         mov ebx,[edi+0x04]                 ;段长度
+         dec ebx                            ;段界限 
+         mov ecx,0x00409200                 ;字节粒度的数据段描述符
+         call sys_routine_seg_sel:make_seg_descriptor
+         call sys_routine_seg_sel:set_up_gdt_descriptor
+         mov [edi+0x04],cx                            
+
+         ;建立程序代码段描述符
+         mov eax,edi
+         add eax,[edi+0x14]                 ;代码起始线性地址
+         mov ebx,[edi+0x18]                 ;段长度
+         dec ebx                            ;段界限
+         mov ecx,0x00409800                 ;字节粒度的代码段描述符
+         call sys_routine_seg_sel:make_seg_descriptor
+         call sys_routine_seg_sel:set_up_gdt_descriptor
+         mov [edi+0x14],cx                  ;回填加载程序重定向之后的代码段地址
+
+         ;建立程序数据段描述符
+         mov eax,edi
+         add eax,[edi+0x1c]                 ;数据段起始线性地址
+         mov ebx,[edi+0x20]                 ;段长度
+         dec ebx                            ;段界限
+         mov ecx,0x00409200                 ;字节粒度的数据段描述符
+         call sys_routine_seg_sel:make_seg_descriptor
+         call sys_routine_seg_sel:set_up_gdt_descriptor
+         mov [edi+0x1c],cx                  ;回填加载程序重定向之后的数据段地址
+
+         ;建立程序堆栈段描述符
+         mov ecx,[edi+0x0c]                 ;4KB的倍率 
+         mov ebx,0x000fffff
+         sub ebx,ecx                        ;得到段界限
+         mov eax,4096                        
+         mul dword [edi+0x0c]                         
+         mov ecx,eax                        ;准备为堆栈分配内存 
+         call sys_routine_seg_sel:allocate_memory
+         add eax,ecx                        ;得到堆栈的高端物理地址 
+         mov ecx,0x00c09600                 ;4KB粒度的堆栈段描述符
+         call sys_routine_seg_sel:make_seg_descriptor
+         call sys_routine_seg_sel:set_up_gdt_descriptor
+         mov [edi+0x08],cx                  ;回填加载程序重定向之后的堆栈段地址
+
+    //TODO:
+
+
+
+
 start:
     mov ecx,core_data_seg_sel       ;ds指向核心数据段
     mov ds,ecx
@@ -397,6 +486,17 @@ start:
     mov ebx,do_status
     call sys_routine_seg_sel:put_string
     mov [esp_pointer],esp   ;临时保存堆栈指针
-    mov ds,ax   ;TODO:这是什么意思，ax此时应该为0004？
-    ;此时的代码段选择子已经是核心代码段选择子，在mbr跳到start时就已经装载
+    mov ds,ax   ;TODO:这是什么意思，ax此时应该为0004？因为load_relocate_program返回值ax中为用户程序代码段选择子
+    ;[0x10]
     jmp far [0x10]
+
+return_point:
+    mov eax,core_data_seg_sel
+    mov ds,eax
+    mov eax,core_stack_seg_sel
+    mov ss,eax
+    mov esp,[esp_pointer]
+    mov ebx,message_6
+    call sys_routine_seg_sel:put_string
+    ;这里可以放置清除用户程序各种描述符的指令，也可以加载并启动其它程序
+    hlt
