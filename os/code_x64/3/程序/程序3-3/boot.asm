@@ -180,8 +180,10 @@ Label_No_LoaderBin:
 Label_FileName_Found:
 
 	mov	ax,	RootDirSectors
+	;di中存储的是找到的地址，加26之后就是该目录对应文件的起始簇号
 	and	di,	0ffe0h
 	add	di,	01ah
+	;簇号，（目前是一簇一扇区，情况胶简单）
 	mov	cx,	word	[es:di]
 	push	cx
 	add	cx,	ax
@@ -202,8 +204,11 @@ Label_Go_On_Loading_File:
 	pop	ax
 
 	mov	cl,	1
+	;es:bx扇区数据，cx读取几个扇区，ax读取扇区起始号
 	call	Func_ReadOneSector
 	pop	ax
+	;FAT12文件系统每个表项占用12bit
+	;AH=FAT表项号
 	call	Func_GetFATEntry
 	cmp	ax,	0fffh
 	jz	Label_File_Loaded
@@ -219,6 +224,7 @@ Label_File_Loaded:
 	jmp	BaseOfLoader:OffsetOfLoader
 
 ;=======	read one sector from floppy
+
 
 Func_ReadOneSector:
 	
@@ -266,7 +272,13 @@ Func_GetFATEntry:
 	mov	byte	[Odd],	1
 
 Label_Even:
-
+	;ax为loader.bin对应文件簇号
+	;异或清零
+    ;16位除法:
+    ;   1.除数:由通用寄存器或内存单元提供
+    ;   2.被除数:低16位ax，高16位dx
+    ;   3.余数dx，商ax中
+    ;dx-ax 除 bx = ax-dx（dx-ax是地址，除后商ax第几个扇区，余数dx下个扇区字节）
 	xor	dx,	dx
 	mov	bx,	[BPB_BytesPerSec]
 	div	bx
@@ -275,7 +287,7 @@ Label_Even:
 	add	ax,	SectorNumOfFAT1Start
 	mov	cl,	2
 	call	Func_ReadOneSector
-	
+	;TODO：此处代码待思考
 	pop	dx
 	add	bx,	dx
 	mov	ax,	[es:bx]
