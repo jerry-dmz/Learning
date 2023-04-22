@@ -11,14 +11,14 @@ OffsetOfLoader	equ	0x0000
 ;(224*32+512-1)/512=14个扇区
 ;TODO:此处为什么要加512？？？
 RootDirSectors	equ	14
-SectorNumOfRootDirStart	equ	19
+startSelectorOfRootDir	equ	19
 SectorNumOfFAT1Start	equ	1
 ;数据区起始扇区号 = 根目录起始扇区号 + 根目录区所占扇区数 - 2
 ;TODO:???这个变量很容易让人造成误解
 SectorBalance	equ	17	
 	;TODO:此处为什么要用跳转指令？？？
 	;使指令按字对齐，产生一定的延迟，等待计算机缓冲区清空
-	jmp	short Label_Start
+	jmp	short _start
 	nop
 	BS_OEMName	db	'MINEboot'
 	BPB_BytesPerSec	dw	512
@@ -40,7 +40,7 @@ SectorBalance	equ	17
 	BS_VolLab	db	'boot loader'
 	BS_FileSysType	db	'FAT12   '
 
-Label_Start:
+_start:
 
 	mov	ax,	cs
 	mov	ds,	ax
@@ -73,7 +73,7 @@ Label_Start:
 	mov	ax,	ds
 	mov	es,	ax
 	pop	ax
-	mov	bp,	StartBootMessage
+	mov	bp,	bootMessage
 	int	10h
 
 ;=======	reset floppy
@@ -83,73 +83,68 @@ Label_Start:
 	int	13h
 
 ;=======	search loader.bin
-	mov	word	[SectorNo],	SectorNumOfRootDirStart
+	mov	word	[sectorNumber_tmp],	startSelectorOfRootDir
 
-Lable_Search_In_Root_Dir_Begin:
+searchInRootEntry:
 
-	cmp	word	[RootDirSizeForLoop],	0
-	jz	Label_No_LoaderBin
-	dec	word	[RootDirSizeForLoop]	
+	cmp	word	[tempRootDirSector],	0
+	jz	loaderNotFound
+	dec	word	[tempRootDirSector]	
 	mov	ax,	00h
 	mov	es,	ax
 	mov	bx,	8000h
-	mov	ax,	[SectorNo]
+	mov	ax,	[sectorNumber_tmp]
 	mov	cl,	1
 	;es:bx存储读取的数据
 	;ax，代表读哪个扇区
 	;cx，代表读取扇区数
-	call	Func_ReadOneSector
-	mov	si,	LoaderFileName
+	call	FUNC_ReadASector
+	mov	si,	LoaderName
 	mov	di,	8000h
 	;控制串操作指令方法（lodsb）	
 	cld
 	;一个扇区512字节，一个目录项32字节，故16次
 	mov	dx,	10h
 	
-Label_Search_For_LoaderBin:
+	searchLoader:
 
-	cmp	dx,	0
-	jz	Label_Goto_Next_Sector_In_Root_Dir
-	dec	dx
-	;目录区每个目录名字11个字节
-	mov	cx,	11
+		cmp	dx,	0
+		jz	gotoNextRootEntry
+		dec	dx
+		;目录区每个目录名字11个字节
+		mov	cx,	11
 
-Label_Cmp_FileName:
-	
-	;如果比较了前11个字节还是符合，则算符合的文件
-	cmp	cx,	0
-	jz	Label_FileName_Found
-	dec	cx
-	;将一个字节传送到ax
-	;TODO:为何不能取指定字节,要这么麻烦。
-	lodsb	
-	cmp	al,	byte	[es:di]
-	jz	Label_Go_On
-	;如果比较途中，有一个不符合则跳转下一个目录读取
-	jmp	Label_Different
+		compareAChar:
+			;如果比较了前11个字节还是符合，则算符合的文件
+			cmp	cx,	0
+			jz	startLoad
+			dec	cx
+			;将一个字节传送到ax
+			;TODO:为何不能取指定字节,要这么麻烦。
+			lodsb	
+			cmp	al,	byte	[es:di]
+			jz	compareNextChar
+			;如果比较途中，有一个不符合则跳转下一个目录读取
+			jmp	searchNextSector
 
-Label_Go_On:
-	
+compareNextChar:
 	inc	di
-	jmp	Label_Cmp_FileName
+	jmp	compareAChar
 
-Label_Different:
-
+searchNextSector:
 	;清空di的低32位，然后跳到下一个扇区
 	and	di,	0ffe0h
 	add	di,	20h
-	mov	si,	LoaderFileName
-	jmp	Label_Search_For_LoaderBin
+	mov	si,	LoaderName
+	jmp	searchLoader
 
-Label_Goto_Next_Sector_In_Root_Dir:
-	
-	add	word	[SectorNo],	1
-	jmp	Lable_Search_In_Root_Dir_Begin
+gotoNextRootEntry:
+	add	word	[sectorNumber_tmp],	1
+	jmp	searchInRootEntry
 	
 ;=======	display on screen : ERROR:No LOADER Found
 
-Label_No_LoaderBin:
-
+loaderNotFound:
 	mov	ax,	1301h
 	mov	bx,	008ch
 	mov	dx,	0100h
@@ -158,19 +153,19 @@ Label_No_LoaderBin:
 	mov	ax,	ds
 	mov	es,	ax
 	pop	ax
-	mov	bp,	NoLoaderMessage
+	mov	bp,	noLoderMessage
 	int	10h
 	jmp	$
 
 ;=======	found loader.bin name in root director struct
 
-Label_FileName_Found:
+startLoad:
 
 	mov	ax,	RootDirSectors
 	;di中存储的是找到的地址，加26之后就是该目录对应文件的起始簇号
 	and	di,	0ffe0h
 	add	di,	01ah
-	;簇号，（目前是一簇一扇区，情况胶简单）
+	;簇号，（目前是一簇一扇区，情况较简单）
 	mov	cx,	word	[es:di]
 	push	cx
 	add	cx,	ax
@@ -180,7 +175,7 @@ Label_FileName_Found:
 	mov	bx,	OffsetOfLoader
 	mov	ax,	cx
 
-Label_Go_On_Loading_File:
+loading:
 	push	ax
 	push	bx
 	mov	ah,	0eh
@@ -192,29 +187,28 @@ Label_Go_On_Loading_File:
 
 	mov	cl,	1
 	;es:bx扇区数据，cx读取几个扇区，ax读取扇区起始号
-	call	Func_ReadOneSector
+	call	FUNC_ReadASector
 	pop	ax
 	;FAT12文件系统每个表项占用12bit
 	;AH=FAT表项号
-	call	Func_GetFATEntry
+	call	FUNC_GetFATEntry
 	cmp	ax,	0fffh
-	jz	Label_File_Loaded
+	jz	loaded
 	push	ax
 	mov	dx,	RootDirSectors
 	add	ax,	dx
 	add	ax,	SectorBalance
 	add	bx,	[BPB_BytesPerSec]
-	jmp	Label_Go_On_Loading_File
+	jmp	loading
 
-Label_File_Loaded:
+loaded:
 	
 	jmp	BaseOfLoader:OffsetOfLoader
 
 ;=======	read one sector from floppy
 
-
-Func_ReadOneSector:
-	
+;es:bx扇区数据，cx读取几个扇区，ax读取扇区起始号
+FUNC_ReadASector:
 	push	bp
 	mov	bp,	sp
 	sub	esp,	2
@@ -240,8 +234,9 @@ Label_Go_On_Reading:
 	ret
 
 ;=======	get FAT Entry
-
-Func_GetFATEntry:
+;FAT12文件系统每个表项占用12bit
+;AH=FAT表项号
+FUNC_GetFATEntry:
 
 	push	es
 	push	bx
@@ -273,7 +268,7 @@ Label_Even:
 	mov	bx,	8000h
 	add	ax,	SectorNumOfFAT1Start
 	mov	cl,	2
-	call	Func_ReadOneSector
+	call	FUNC_ReadASector
 	;TODO：此处代码待思考
 	pop	dx
 	add	bx,	dx
@@ -290,15 +285,15 @@ Label_Even_2:
 
 ;=======	tmp variable
 
-RootDirSizeForLoop	dw	RootDirSectors
-SectorNo		dw	0
+tempRootDirSector	dw	RootDirSectors
+sectorNumber_tmp		dw	0
 Odd			db	0
 
 ;=======	display messages
 
-StartBootMessage:	db	"Start Boot"
-NoLoaderMessage:	db	"ERROR:No LOADER Found"
-LoaderFileName:		db	"LOADER  BIN",0
+bootMessage:	db	"Start Boot"
+noLoderMessage:	db	"ERROR:No LOADER Found"
+LoaderName:		db	"LOADER  BIN",0
 
 ;=======	fill zero until whole sector
 

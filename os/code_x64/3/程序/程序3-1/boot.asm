@@ -2,6 +2,10 @@
 
 	org	0x7c00	
 
+;栈向下增长
+;000-3FF 中断向量表
+;400-4FF BIOS DATA Area
+;500-7BFF 约30KB,可用区域
 BaseOfStack	equ	0x7c00
 
 Label_Start:
@@ -14,10 +18,10 @@ Label_Start:
 
 ;=======	clear screen
 
-	mov	ax,	0600h
-	mov	bx,	0700h
-	mov	cx,	0
-	mov	dx,	0184fh
+	mov	ax,	0600h ;滚动6行
+	mov	bx,	0700h ;空出行的背景，7表示白色、0表示黑色
+	mov	cx,	0	;滚动左上角
+	mov	dx,	0184fh ;滚动右下角
 	int	10h
 
 ;=======	set focus
