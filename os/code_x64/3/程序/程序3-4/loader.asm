@@ -1,15 +1,22 @@
-
-
 org	10000h
-	jmp	Label_Start
+	jmp	_start
 
+;将fat12文件系统结构相关数据封到单独一个文件
 %include	"fat12.inc"
 
-BaseOfKernelFile	equ	0x00
-OffsetOfKernelFile	equ	0x100000
+;......
+;9FC00-9FFFF 1KB EBDA 扩展BIOS数据区
+;7E00-9FBFF 约608KB，可用区域
+;7C00-7DFF 512B
+;......
+;1MB处，1MB以下的物理地址并不全是可用的内存地址，而且内核程序的体积也可能会超过1MB
+kernelBase	equ	0x00
+kernelOffset	equ	0x100000
 
-BaseTmpOfKernelAddr	equ	0x00
-OffsetTmpOfKernelFile	equ	0x7E00
+;内核程序的读取还要使用bios的INT 13h号功能，BIOS在实模式下只支持1MB的物理地址空间寻址
+tempKernelBase	equ	0x00
+tempKernelOffset	equ	0x7E00
+
 
 MemoryStructBufferAddr	equ	0x7E00
 
@@ -39,10 +46,15 @@ GdtPtr64	dw	GdtLen64 - 1
 SelectorCode64	equ	LABEL_DESC_CODE64 - LABEL_GDT64
 SelectorData64	equ	LABEL_DESC_DATA64 - LABEL_GDT64
 
+
+;nasm编译器处于16位宽状态下：
+;使用32位宽数据指令需要在指令前加入前缀0x66,使用32位宽地址指令时，需要加前缀0x67
+;同理，在32宽状态下，使用16位宽指令，也要加前缀
+;伪指令[BITS 位宽]是一种等效的书写格式
 [SECTION .s16]
 [BITS 16]
 
-Label_Start:
+_start:
 
 	mov	ax,	cs
 	mov	ds,	ax
@@ -51,7 +63,7 @@ Label_Start:
 	mov	ss,	ax
 	mov	sp,	0x7c00
 
-;=======	display on screen : Start Loader......
+	;=======	display on screen : Start Loader......
 
 	mov	ax,	1301h
 	mov	bx,	000fh
@@ -61,197 +73,204 @@ Label_Start:
 	mov	ax,	ds
 	mov	es,	ax
 	pop	ax
-	mov	bp,	StartLoaderMessage
+	mov	bp,	startLoadMessage
 	int	10h
 
-;=======	open address A20
+	;=======	open address A20
+	;历史遗留问题，//TODO：详细了解
+	;开启A20地址线的几种方法：
+	;1.操作键盘控制器
+	;2.A20快速门，使用IO端口的0x92处理，对于不含键盘控制器的操作系统，只能用此方法，但该端口可能被其他设备占用
+	;3.使用int 15h
+	;4.通过读0xee端口开启，而写该端口会禁止
 	push	ax
 	in	al,	92h
 	or	al,	00000010b
 	out	92h,	al
 	pop	ax
 
+	;关中断
 	cli
-
+	;TODO:16位状态下使用32位控制指令，需要加后缀（此处为什么需要加？不是已经有了伪指令了吗？）
 	db	0x66
-	lgdt	[GdtPtr]	
 
+	;TODO:这段代码仅仅是为了让fs寄存器寻址模式超过1MB(Big Real Mode),感觉很挫。看看有没有新办法。
+	;TODO：补充之前关于保护模式的总结。
+	lgdt	[GdtPtr]	
+	;将cr0置位
 	mov	eax,	cr0
 	or	eax,	1
 	mov	cr0,	eax
 
 	mov	ax,	SelectorData32
 	mov	fs,	ax
+	;取消CR0的置位，退出保护模式
 	mov	eax,	cr0
 	and	al,	11111110b
 	mov	cr0,	eax
-
+	;关中断
 	sti
 
-;=======	reset floppy
-
+	;=======	reset floppy
+	;TODO:这段是啥意思？为什么一定要重置软盘？
 	xor	ah,	ah
 	xor	dl,	dl
 	int	13h
 
-;=======	search kernel.bin
+	;=======	search kernel.bin
+	;记住fat12文件系统的结构组成，引导扇区->fat表->根目录区->数据区
 	mov	word	[SectorNo],	SectorNumOfRootDirStart
 
-Lable_Search_In_Root_Dir_Begin:
-
-	cmp	word	[RootDirSizeForLoop],	0
-	jz	Label_No_LoaderBin
-	dec	word	[RootDirSizeForLoop]	
-	mov	ax,	00h
-	mov	es,	ax
-	mov	bx,	8000h
-	mov	ax,	[SectorNo]
-	mov	cl,	1
-	call	Func_ReadOneSector
-	mov	si,	KernelFileName
-	mov	di,	8000h
-	cld
-	mov	dx,	10h
+	searchInRootEntry:
+		cmp	word	[tempRootDirSectors],	0
+		jz	noLoader
+		dec	word	[tempRootDirSectors]	
+		mov	ax,	00h
+		mov	es,	ax
+		mov	bx,	8000h
+		mov	ax,	[SectorNo]
+		mov	cl,	1
+		;es:bx存储读取的数据
+		;ax，代表读哪个扇区
+		;cx，代表读取扇区数
+		call	Func_ReadOneSector
+		mov	si,	KernelFileName
+		mov	di,	8000h
+		cld
+		mov	dx,	10h
 	
-Label_Search_For_LoaderBin:
+		searchLoader:
+			cmp	dx,	0
+			jz	searchLoaderInNextSelector
+			dec	dx
+			mov	cx,	11
 
-	cmp	dx,	0
-	jz	Label_Goto_Next_Sector_In_Root_Dir
-	dec	dx
-	mov	cx,	11
+			compareFileName:
+				cmp	cx,	0
+				jz	loaderFound
+				dec	cx
+				;由si指向的位置读取一个字节传送到ax
+				lodsb	
+				cmp	al,	byte	[es:di]
+				jz	compareNextChar
+				jmp	fastFail
 
-Label_Cmp_FileName:
+			compareNextChar:
+				inc	di
+				jmp	compareFileName
 
-	cmp	cx,	0
-	jz	Label_FileName_Found
-	dec	cx
-	lodsb	
-	cmp	al,	byte	[es:di]
-	jz	Label_Go_On
-	jmp	Label_Different
+			fastFail:
+				and	di,	0FFE0h
+				add	di,	20h
+				mov	si,	KernelFileName
+				jmp	searchLoader
 
-Label_Go_On:
+		searchLoaderInNextSelector:		
+			add	word	[SectorNo],	1
+			jmp	searchInRootEntry
 	
-	inc	di
-	jmp	Label_Cmp_FileName
+	;=======	display on screen : ERROR:No KERNEL Found
 
-Label_Different:
+	noLoader:
+		mov	ax,	1301h
+		mov	bx,	008Ch
+		mov	dx,	0300h		;row 3
+		mov	cx,	21
+		push	ax
+		mov	ax,	ds
+		mov	es,	ax
+		pop	ax
+		mov	bp,	NoLoaderMessage
+		int	10h
+		jmp	$
 
-	and	di,	0FFE0h
-	add	di,	20h
-	mov	si,	KernelFileName
-	jmp	Label_Search_For_LoaderBin
+	;=======	found loader.bin name in root director struct
 
-Label_Goto_Next_Sector_In_Root_Dir:
-	
-	add	word	[SectorNo],	1
-	jmp	Lable_Search_In_Root_Dir_Begin
-	
-;=======	display on screen : ERROR:No KERNEL Found
+	loaderFound:
+		mov	ax,	RootDirSectors
+		and	di,	0FFE0h
+		add	di,	01Ah
+		mov	cx,	word	[es:di]
+		push	cx
+		add	cx,	ax
+		add	cx,	SectorBalance
+		mov	eax,	tempKernelBase	;kernelBase
+		mov	es,	eax
+		mov	bx,	tempKernelOffset	;kernelOffset
+		mov	ax,	cx
 
-Label_No_LoaderBin:
+		compareNextChar_Loading_File:
+		push	ax
+		push	bx
+		mov	ah,	0Eh
+		mov	al,	'.'
+		mov	bl,	0Fh
+		int	10h
+		pop	bx
+		pop	ax
 
-	mov	ax,	1301h
-	mov	bx,	008Ch
-	mov	dx,	0300h		;row 3
-	mov	cx,	21
-	push	ax
-	mov	ax,	ds
-	mov	es,	ax
-	pop	ax
-	mov	bp,	NoLoaderMessage
-	int	10h
-	jmp	$
+		mov	cl,	1
+		call	Func_ReadOneSector
+		pop	ax
 
-;=======	found loader.bin name in root director struct
+		;;;;;;;;;;;;;;;;;;;;;;;	
+		push	cx
+		push	eax
+		push	fs
+		push	edi
+		push	ds
+		push	esi
 
-Label_FileName_Found:
-	mov	ax,	RootDirSectors
-	and	di,	0FFE0h
-	add	di,	01Ah
-	mov	cx,	word	[es:di]
-	push	cx
-	add	cx,	ax
-	add	cx,	SectorBalance
-	mov	eax,	BaseTmpOfKernelAddr	;BaseOfKernelFile
-	mov	es,	eax
-	mov	bx,	OffsetTmpOfKernelFile	;OffsetOfKernelFile
-	mov	ax,	cx
+		mov	cx,	200h
+		mov	ax,	kernelBase
+		mov	fs,	ax
+		mov	edi,	dword	[kernelOffsetCount]
 
-Label_Go_On_Loading_File:
-	push	ax
-	push	bx
-	mov	ah,	0Eh
-	mov	al,	'.'
-	mov	bl,	0Fh
-	int	10h
-	pop	bx
-	pop	ax
+		mov	ax,	tempKernelBase
+		mov	ds,	ax
+		mov	esi,	tempKernelOffset
 
-	mov	cl,	1
-	call	Func_ReadOneSector
-	pop	ax
+		moveKernel:	;------------------
+			mov	al,	byte	[ds:esi]
+			mov	byte	[fs:edi],	al
 
-;;;;;;;;;;;;;;;;;;;;;;;	
-	push	cx
-	push	eax
-	push	fs
-	push	edi
-	push	ds
-	push	esi
+			inc	esi
+			inc	edi
 
-	mov	cx,	200h
-	mov	ax,	BaseOfKernelFile
-	mov	fs,	ax
-	mov	edi,	dword	[OffsetOfKernelFileCount]
+			loop	moveKernel
 
-	mov	ax,	BaseTmpOfKernelAddr
-	mov	ds,	ax
-	mov	esi,	OffsetTmpOfKernelFile
+			mov	eax,	0x1000
+			mov	ds,	eax
 
-Label_Mov_Kernel:	;------------------
-	
-	mov	al,	byte	[ds:esi]
-	mov	byte	[fs:edi],	al
+			mov	dword	[kernelOffsetCount],	edi
 
-	inc	esi
-	inc	edi
+			pop	esi
+			pop	ds
+			pop	edi
+			pop	fs
+			pop	eax
+			pop	cx
+		;;;;;;;;;;;;;;;;;;;;;;;	
 
-	loop	Label_Mov_Kernel
+			call	Func_GetFATEntry
+			cmp	ax,	0FFFh
+			jz	loaded
+			push	ax
+			mov	dx,	RootDirSectors
+			add	ax,	dx
+			add	ax,	SectorBalance
 
-	mov	eax,	0x1000
-	mov	ds,	eax
+			jmp	compareNextChar_Loading_File
 
-	mov	dword	[OffsetOfKernelFileCount],	edi
-
-	pop	esi
-	pop	ds
-	pop	edi
-	pop	fs
-	pop	eax
-	pop	cx
-;;;;;;;;;;;;;;;;;;;;;;;	
-
-	call	Func_GetFATEntry
-	cmp	ax,	0FFFh
-	jz	Label_File_Loaded
-	push	ax
-	mov	dx,	RootDirSectors
-	add	ax,	dx
-	add	ax,	SectorBalance
-
-	jmp	Label_Go_On_Loading_File
-
-Label_File_Loaded:
-		
-	mov	ax, 0B800h
-	mov	gs, ax
-	mov	ah, 0Fh				; 0000: 黑底    1111: 白字
-	mov	al, 'G'
-	mov	[gs:((80 * 0 + 39) * 2)], ax	; 屏幕第 0 行, 第 39 列。
+			loaded:	
+				mov	ax, 0B800h
+				mov	gs, ax
+				mov	ah, 0Fh				; 0000: 黑底    1111: 白字
+				mov	al, 'G'
+				mov	[gs:((80 * 0 + 39) * 2)], ax	; 屏幕第 0 行, 第 39 列。
 
 KillMotor:
-	
+	;关闭软盘驱动器
 	push	dx
 	mov	dx,	03F2h
 	mov	al,	0	
@@ -259,7 +278,7 @@ KillMotor:
 	pop	dx
 
 ;=======	get memory address size type
-
+	;获取VBE显示信息
 	mov	ax,	1301h
 	mov	bx,	000Fh
 	mov	dx,	0400h		;row 4
@@ -270,27 +289,43 @@ KillMotor:
 	pop	ax
 	mov	bp,	StartGetMemStructMessage
 	int	10h
-
 	mov	ebx,	0
 	mov	ax,	0x00
 	mov	es,	ax
 	mov	di,	MemoryStructBufferAddr	
 
-Label_Get_Mem_Struct:
-
+getMemStruct:
+	;第一次调用，bx必须为0
+	;es:di 指向地址范围描述符
+	;CF=0表示没有错误
+	;eax=0x0E820 获取内存信息
+	;edx=0534D4 TODO：此用处？
+	;ecx 描述符结构大小，以字节为单位 
+	;ebx 放置下一个地址描述符所需要的后续值，这个依赖BIOS实现，如果值为表示是最后一个地址描述符。
 	mov	eax,	0x0E820
 	mov	ecx,	20
 	mov	edx,	0x534D4150
 	int	15h
-	jc	Label_Get_Mem_Fail
+	jc	getMemFail
 	add	di,	20
 
 	cmp	ebx,	0
-	jne	Label_Get_Mem_Struct
-	jmp	Label_Get_Mem_OK
+	jne	getMemStruct
+	jmp	getMemSuccess
 
-Label_Get_Mem_Fail:
-
+getMemFail:
+	;AH=0x13h,显示一行字符串
+	;AL=写入模式
+	;	0x00 显示后光标位置不同
+	;	0x01 同AL=0x00，光标会移动字符串尾端位置
+	;	0x02 字符串属性由每个字符后紧跟的字节的提供，故CX寄存器提供的字符长度改为Word为单位，显示后光标为不变
+	;	0x03 同AL=0x02，光标会移动到字符串末尾
+	;CX=字符串长度
+	;DH=光标的坐标行号
+	;DL=坐标的坐标列号
+	;ES:BP 要显示字符的内存地址
+	;BH=页码
+	;BL=字符属性/颜色属性
 	mov	ax,	1301h
 	mov	bx,	008Ch
 	mov	dx,	0500h		;row 5
@@ -303,8 +338,7 @@ Label_Get_Mem_Fail:
 	int	10h
 	jmp	$
 
-Label_Get_Mem_OK:
-	
+getMemSuccess:
 	mov	ax,	1301h
 	mov	bx,	000Fh
 	mov	dx,	0600h		;row 6
@@ -556,7 +590,7 @@ GO_TO_TMP_Protect:
 	bts	eax,	31
 	mov	cr0,	eax
 
-	jmp	SelectorCode64:OffsetOfKernelFile
+	jmp	SelectorCode64:kernelOffset
 
 ;=======	test support long mode or not
 
@@ -603,11 +637,11 @@ Func_ReadOneSector:
 	and	dh,	1
 	pop	bx
 	mov	dl,	[BS_DrvNum]
-Label_Go_On_Reading:
+compareNextChar_Reading:
 	mov	ah,	2
 	mov	al,	byte	[bp - 2]
 	int	13h
-	jc	Label_Go_On_Reading
+	jc	compareNextChar_Reading
 	add	esp,	2
 	pop	bp
 	ret
@@ -708,16 +742,16 @@ IDT_POINTER:
 
 ;=======	tmp variable
 
-RootDirSizeForLoop	dw	RootDirSectors
+tempRootDirSectors	dw	RootDirSectors
 SectorNo		dw	0
 Odd			db	0
-OffsetOfKernelFileCount	dd	OffsetOfKernelFile
+kernelOffsetCount	dd	kernelOffset
 
 DisplayPosition		dd	0
 
 ;=======	display messages
 
-StartLoaderMessage:	db	"Start Loader"
+startLoadMessage:	db	"Start Loader"
 NoLoaderMessage:	db	"ERROR:No KERNEL Found"
 KernelFileName:		db	"KERNEL  BIN",0
 StartGetMemStructMessage:	db	"Start Get Memory Struct."

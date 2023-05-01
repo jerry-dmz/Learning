@@ -1,5 +1,3 @@
-
-
 all: boot.bin loader.bin
 
 loader.bin:
