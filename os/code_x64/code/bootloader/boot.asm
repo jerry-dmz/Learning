@@ -1,5 +1,4 @@
 ;具体思路，建立FAT文件系统,加载loader
-
 ;----内存空间布局----：
 ;000~3FF        1KB 中断向量表
 ;400~4FF        256B BIOS数据区
@@ -30,6 +29,44 @@ stackBase equ 0x7c00
 jmp short _start
 nop
 
+;生产厂商名 8字节
+OemName db 'mineboot'
+;每扇区字节数 2字节
+BytesPerSector dw 512
+;每簇扇区数,簇是FAT类文件系统最小数据存储单位
+SectorsPerClus db 1
+;保留扇区数，引导扇区也算保留扇区
+ReservedSectors db 1
+;Fat表份数
+FatCount db 2
+;根目录可容纳目录项数
+RootEntryCount dw 224
+;总扇区数
+TotalSectors_16 dw 2880
+;介质存储类型，对于不可移动存储介质通常是0xF8,可移动存储介质值通常是0xF0。必须与FAT[0]一致。
+MediaDescriptor db 0xf0
+;每Fat扇区数
+SectorsPerFat dw 9
+;每磁道扇区数
+SectorsPerTrack dw 18
+;磁头数
+HeadCount dw 2
+;隐藏扇区数
+HiddenSectors dd 0
+;如果TotalSectors_16为0，则由此值记录扇区数
+TotalSectors_32 dw 2880
+;int 13h的驱动器号
+DriverNumber db 0
+;未使用,保留
+Reserved db 0
+;扩展引导标记
+BootSig db 0x29
+;卷序列号
+VolumnId dd 0
+;卷标
+VolumnLabel db 'boot loader'
+;文件系统类型，只是描述性的字符，没有实质作用
+FileType db 'FAT12'
 _start:
 
 
