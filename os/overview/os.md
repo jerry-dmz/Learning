@@ -3812,27 +3812,69 @@ CRT显示器因为设计制造的原因，只能接受模拟信号，VGA接口�
 
 **一定要搞清楚，要自己动手，不然最后造成的困扰只会更多，然后造成恶性循环。想要高效，想要省时间，最后反而浪费过多时间**
 
+**在精读这本书的同时，一定将知识和以前的贯通起来，不让之前的辛苦白费**
 
+## 环境安装
 
+使用**dd**命令写**bximage**（[Using the bximage tool](file:///D:/software/Bochs-2.7/docs/user/using-bximage.html)）创建的虚拟磁盘文件
 
+**dd if=boot.bin of=boot.img bs=512 count=1 conv=notrunc**
 
+其中**notrunc**参数，表明不把输出文件截断和输入文件一样大（估计是默认选项），还有其他的诸如将大写字母转换为小写字母，**BCD**码转换为**ASCLL**码。
 
+[Ghost](https://baike.baidu.com/item/ghost/847?fr=aladdin)
 
+### 实验1 
 
+**bximage生成文件的实际格式**
 
+bximage创建hd时有flat、vpc、sparse、growing、vmware4几种选项。使用**od**或vscode的**hex editor插件**发现特定位置有一些特定的描述字符串（**flat模式啥都没有**）。估计是为了支持各种特性如snatpot而冗余的元数据吧。
 
+[vmware虚拟机](https://blog.csdn.net/thanklife/article/details/78319171)
 
+[常用的几种虚拟化磁盘格式](https://www.cnblogs.com/jinanxiaolaohu/p/9246480.html)
 
+Bochs使用的vgaromimage来在[**vgabios**](https://github.com/miurahr/vgabios)项目
 
+### Bochs调试指令
 
+| 行为                        | 指令                                                      | 示例           |
+| --------------------------- | --------------------------------------------------------- | -------------- |
+| 某物理地址设置断点          | b adrr                                                    | b 0x30400      |
+| 显示所有断点信息            | info break                                                |                |
+| 继续执行，直到遇到断点      | c                                                         | c              |
+| 单步执行（遇到函数则跳过）  | n                                                         | n              |
+| 查看寄存器信息              | info cpu<br /><br />r<br /><br />fp<br /><br />sreg、creg |                |
+| 查看堆栈                    | print-stack                                               |                |
+| 查看内存物理地址内容        | xp /nuf addr                                              | xp /40bx 0x13e |
+| 查看线性地址内容            | x /buf addr                                               | x /40bx 0x13e  |
+| 反汇编一段内存              | u start end                                               |                |
+| 反汇编执行每一条指令        | trace-on                                                  |                |
+| 没执行一条指令就打印cpu信息 | trace-reg                                                 |                |
 
+### 保护模式
 
+FreeDos使用，下载解压，默认有两个软盘，一个硬盘。只要将自己的软盘挂载成d盘，即可对磁盘做格式化操作，此操作应该会创建**flat文件系统**的元数据结构
 
+### 段描述符结构
 
+此处图参照隔壁**assembly.md**章节,哪里更详尽、详细
 
+对于type类型
 
+![image-20230611215555273](os.assets/image-20230611215555273.png)
 
+对于、代码段、数据段、系统段、门描述符，这4位指代的值都有所不同。
 
+### 一致性的含义
+
+转移的目标是一个特权级更高的一致代码段，当前的特权级会被**延续**下去，反之会引发#GP异常，除非通过调用门或任务门
+
+所有数据段都是非一致性的， 并且与代码段不同，数据段可以被更高特权级代码访问到，而不需要特定的门。
+
+![image-20230702154359174](os.assets/image-20230702154359174.png)
+
+描述符索引
 
 
 
