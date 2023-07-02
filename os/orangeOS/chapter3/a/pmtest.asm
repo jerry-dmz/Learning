@@ -1,5 +1,5 @@
-%include "C:\Users\dmzc\Desktop\Learing\os\orangeOS\chapter3\a\pm.inc"
-org 07c00h
+%include "pm.inc"
+org 0100h
     jmp beign
 
 ;gdt开始
@@ -51,6 +51,11 @@ beign:
     cli
 
     ;打开地址线A20，有多种方式
+    in al,92h
+    or al,00000010b
+    out 92h,al
+
+    ;切换到保护模式
     mov eax,cr0
     or eax,1
     mov cr0,eax
@@ -64,10 +69,10 @@ seg32:
     mov ax,videoSelector
     mov gs,ax
 
-    mov edi,(80 * 11 + 79) * 2  ;屏幕11行，79列
-    mov ah,0ch                  ;0000:黑底 1110：红字
-    mov ah,'P'
-    mov [gs:edi],ax
+    ;mov edi,(80 * 11 + 4) * 2  ;屏幕11行，79列
+    ;mov ah,0ch                  ;0000:黑底 1110：红字
+    ;mov ah,'P'
+    ;mov [gs:edi],ax
 
     jmp $
 seg32Len equ $ - seg32          ;32位代码段长度
