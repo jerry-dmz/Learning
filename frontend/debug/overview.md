@@ -294,6 +294,76 @@ TODO：
 
 * 手动关联**sourceMap**
 * **filter**,输入**-**，会提示出所有能用的过滤器，中间加空格，代表组合多个过滤器。ctrl+f还可以搜索请求的内容
+* **developer resources**,先设置**Show console Drawer**
+
+### SourceBuffer
+
+支持添加分片的视频并播放。
+
+### 调试android移动端网页
+
+用数据线将手机和电脑连接
+
+打开允许usb调试
+
+chrome://inspect
+
+要能访问google，因为调试的目标可能是任意chrome版本，所以需要动态下载
+
+Chrome DevTools被设计成和Chrome分离的架构，两者通过**WebSocket**通信
+
+只要实现对接CDP协议的ws服务端，就可以用Chrome DevTools来调试
+
+CDP调试协议是json格式的，**Protocol Monitor**可以开启并观察
+
+远程调试移动端网页**TODO：？？？**
+
+### **Charles**
+
+linux里始终不成功，而且界面也很丑
+
+### 线上代码调试
+
+通过chrome添加sourcemap映射，或者通过charles修改
+
+### CDP
+
+https://chromedevtools.github.io/devtools-protocol/
+
+* Method：frontend向backend请求数据
+* Event：backend推给frontend的一些数据
+
+Chrome DevTools frontend是一个独立的项目
+
+```javascript
+npm install chrome-devtools-frontend
+```
+
+自定义的调试工具基本都是前端部分集成下 Chrome DevTools frontend，后端部分实现下对接 CDP 的 ws 服务来实现的。
+
+比如有很多用 Chrome DevTools 的backend 调试其他代码的工具：https://github.com/ChromeDevTools/awesome-chrome-devtools
+
+比如监听系统级别的（包括浏览器之外）的 http 请求，用 chrome devtools 的Network面板展示的工具 betwixt
+
+比如用 Chrome DevTools 调试 ios 的网络和数据的工具PonyDebugger
+
+Chrome DevTools支持多种信道
+
+### puppeteer
+
+基于CDP实现，以调试模式跑chromium的实例，然后通过websocket连接上，然后通过CDP远程控制。
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
