@@ -1,2 +1,5 @@
 .vscode
 out/*
+*.bin
+*.img
+*.com

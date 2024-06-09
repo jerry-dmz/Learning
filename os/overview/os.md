@@ -3816,11 +3816,15 @@ CRT显示器因为设计制造的原因，只能接受模拟信号，VGA接口�
 
 ## 环境安装
 
-使用**dd**命令写**bximage**（[Using the bximage tool](file:///D:/software/Bochs-2.7/docs/user/using-bximage.html)）创建的虚拟磁盘文件
+使用**nasm**编译得到**boot.bin**（包含引导扇区标志）。通过**bximage**生成一个虚拟硬盘文件
+
+使用**dd**命令写**bximage**（[Using the bximage tool]([Using the bximage tool (sourceforge.io)](https://bochs.sourceforge.io/doc/docbook/user/using-bximage.html))）创建的虚拟磁盘文件
 
 **dd if=boot.bin of=boot.img bs=512 count=1 conv=notrunc**
 
 其中**notrunc**参数，表明不把输出文件截断和输入文件一样大（估计是默认选项），还有其他的诸如将大写字母转换为小写字母，**BCD**码转换为**ASCLL**码。
+
+**ndisasm**：可以反汇编nasm编译的代码。
 
 [Ghost](https://baike.baidu.com/item/ghost/847?fr=aladdin)
 
@@ -3834,7 +3838,7 @@ bximage创建hd时有flat、vpc、sparse、growing、vmware4几种选项。使�
 
 [常用的几种虚拟化磁盘格式](https://www.cnblogs.com/jinanxiaolaohu/p/9246480.html)
 
-Bochs使用的vgaromimage来在[**vgabios**](https://github.com/miurahr/vgabios)项目
+Bochs使用的vgaromimage来自[**vgabios**](https://github.com/miurahr/vgabios)项目
 
 ### Bochs调试指令
 
@@ -3849,16 +3853,22 @@ Bochs使用的vgaromimage来在[**vgabios**](https://github.com/miurahr/vgabios)
 | 查看内存物理地址内容        | xp /nuf addr                                              | xp /40bx 0x13e |
 | 查看线性地址内容            | x /buf addr                                               | x /40bx 0x13e  |
 | 反汇编一段内存              | u start end                                               |                |
-| 反汇编执行每一条指令        | trace-on                                                  |                |
-| 没执行一条指令就打印cpu信息 | trace-reg                                                 |                |
+| 反汇编执行每一条指令        | trace on                                                  |                |
+| 每执行一条指令就打印cpu信息 | trace-reg                                                 |                |
 
 ### 保护模式
 
 FreeDos使用，下载解压，默认有两个软盘，一个硬盘。只要将自己的软盘挂载成d盘，即可对磁盘做格式化操作，此操作应该会创建**flat文件系统**的元数据结构
 
+#### GDT的作用
+
+**Global Descriptor Table**，即全局描述符表。通过段寄存器、段描述符一起来提供**段式存储机制**。
+
 ### 段描述符结构
 
-此处图参照隔壁**assembly.md**章节,哪里更详尽、详细
+此处图参照隔壁**assembly.md**章节,哪里更详尽、详细。
+
+![image-20240525233548126](./assets/image-20240525233548126.png)
 
 对于type类型
 

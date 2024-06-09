@@ -1,12 +1,14 @@
 %include "pm.inc"
-org 0100h
+org 07c00h
     jmp beign
 
 ;gdt开始
-[section .gdt]
+;Descriptor Base, Limit, Attr
+;这个具体要参考pm.inc中的宏定义
+; [section .gdt]
 desc_null:Descriptor 0,0,0  ;空段，硬件要求
-desc_code:Descriptor 0,seg32Len, DA_C + DA_32    ;非一致性代码段  TODO:此处界限
-desc_video:Descriptor 0B8000h,0ffffh,DA_DRW    ;显存段
+desc_code:Descriptor 0,seg32Len-1, DA_C + DA_32    ;非一致性代码段  TODO:此处界限，此处界限即使再大应该也不会影响执行
+desc_video:Descriptor 0B8000h,0ffffh, DA_DRW    ;显存段
 ;gdt结束
 
 ;lgdt指令需要的数据
@@ -19,7 +21,7 @@ codeSelector    equ desc_code - desc_null
 videoSelector   equ desc_video - desc_null 
 ;gdt选择子结束
 
-[section .s16]
+; [section .s16]
 [bits 16]
 beign:
     mov ax,cs
@@ -59,20 +61,25 @@ beign:
     mov eax,cr0
     or eax,1
     mov cr0,eax
-
+    ;混合在16位的32代码
+    ;直接使用jmp codeSelector:0x12234,如果偏移比较大，在16位编译模式下可能会被截断。
+    ;linux中直接使用db指令直接写二进制代码实现。nasm中允许在前面加一个dword关键字。
     jmp dword codeSelector:0
 
-[section .32]
+; [section .32]
 [bits 32]
 
 seg32:
     mov ax,videoSelector
     mov gs,ax
-
-    ;mov edi,(80 * 11 + 4) * 2  ;屏幕11行，79列
-    ;mov ah,0ch                  ;0000:黑底 1110：红字
-    ;mov ah,'P'
-    ;mov [gs:edi],ax
+    mov edi,(80 * 11 + 4) * 2  ;屏幕11行，79列
+    mov ah,0ch                  ;0000:黑底 1110：红字
+    mov ah,'P'
+    mov [gs:edi],ax
 
     jmp $
 seg32Len equ $ - seg32          ;32位代码段长度
+
+;此处应该加下面两行代码，不然复制到img时不会是一个启动扇区，而且$$表示相对于当前段地址的偏移地址
+times 510-($-$$) db 0
+dw 0xaa55
