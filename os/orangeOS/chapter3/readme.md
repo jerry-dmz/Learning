@@ -4,3 +4,5 @@ freedos中使用com启动流程：
 3. 编译pmtest.com(0x07c00要替换位0x0100),在linux中挂在pm.img,使用文件命令将pm.com复制到pm.img
 
 直接使用创建可启动盘调试
+
+不借助freedos启动的话，需要在扇区最后写上0xaa55

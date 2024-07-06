@@ -56,6 +56,8 @@ DA_TRAP_GATE    equ 8Fh ;1000 1111  陷阱门
 ;
 ; 例子：
 ; Descriptor 000B8000h,0ffffh, 0092h
+; 输出：
+; 待研究
 %macro Descriptor 3
 dw %2 & 0FFFFh  ;段界限1（16位） 取段界限的低16位
 dw %1 & 0FFFFh  ;段基址1  取基址的低16位   8000
