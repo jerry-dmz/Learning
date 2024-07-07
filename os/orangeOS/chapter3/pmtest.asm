@@ -1,4 +1,19 @@
 %include "pm.inc"
+; bochsdbg内存dump
+;
+; jmp begin 指令对应：
+; 0x7c00 0xe9
+; 0x7c01 0x1e
+; 0x7c02 0x00
+;
+; 0x7c ~ 0x7x1a 对应gdt定义：
+; 0x7c03 ~ 0x7c0a  0x00   0x00   0x00   0x00   0x00  0x00   0x00   0x00
+; 0x7c0b ~ 0x7c12  0x17   0x00   0x00   0x00   0x00  0x98   0x40   0x00
+; 0x7c13 ~ 0x7c1a  0xFF   0xFF   0x00   0x80   0x0b  0x92   0x00   0x00
+;
+; gdtptr对应
+; 0x7c1b ~ 0x7c20  0x17   0x00   0x00   0x00   0x00  0x00
+
 org 07c00h
     jmp beign
 
@@ -6,34 +21,43 @@ org 07c00h
 ;Descriptor Base, Limit, Attr
 ;这个具体要参考pm.inc中的宏定义
 ; [section .gdt]
-desc_null:Descriptor 0,0,0  ;空段，硬件要求
-desc_code:Descriptor 0,seg32Len-1, DA_C + DA_32    ;非一致性代码段  TODO:此处界限，此处界限即使再大应该也不会影响执行
-desc_video:Descriptor 0B8000h,0ffffh, DA_DRW    ;显存段
+desc_null:Descriptor 0,0,0  ;空段，硬件要求 8字节
+desc_code:Descriptor 0,seg32Len-1, DA_C + DA_32    ;非一致性代码段  TODO:此处界限，此处界限即使再大应该也不会影响执行 8字节
+desc_video:Descriptor 0B8000h,0ffffh, DA_DRW    ;显存段 8字节
 ;gdt结束
 
+;      db  一个字节 8位
+;      dw  一个字，2字节 16位
+;      dd  双字，4字节  32位
+;      dq  四字，8字节  64位
 ;lgdt指令需要的数据
 gdtlen equ $ - desc_null ;gdt长度
-gdtptr dw  gdtlen - 1    ;gdt界限
+gdtptr dw  gdtlen - 1    ;gdt界限 2字节
         dd 0 ;gdt基址
 
+; 选择子为描述符在描述符表里的位移
+;一个描述符8字节，选择子的值必定是64的倍数
 ;gdt选择子开始
 codeSelector  equ desc_code - desc_null
 videoSelector equ desc_video - desc_null
 ;gdt选择子结束
 
+; 上述数据定义33字节，故begin处地址为0x7c21
 ; [section .s16]
 [bits 16]
 beign:
+    ; cs初始值值为0
     mov ax, cs
-    mov dx, ax
+    mov ds, ax
     mov es, ax
     mov ss, ax
+    ;TODO:此处将设置为0100h的意义
     mov sp, 0100h
 
     ;将32位段的基址塞到desc_code中
-    xor eax,                  eax
-    mov ax,                   cs
-    shl eax,                  4     ;为什么会有这个操作???实模式下是20位物理地址，但是32位下是32位的
+    xor eax,                  eax   ;此处代码多余，可以去掉
+    mov ax,                   cs    ;此处代码多余，可以去掉
+    shl eax,                  4     ;也多余，为什么会有这个操作???
     add eax,                  seg32 ;32位段基址
     mov word [desc_code + 2], ax    ;低16位的基址，TODO:还是没搞太懂，待调试
     shr eax,                  16
@@ -42,12 +66,12 @@ beign:
 
     ;加载gdtr
     xor eax,                eax
-    mov ax,                 ds        ;这个似乎也是多余的
-    shl eax,                4
+    mov ax,                 ds        ;此处不多于，mov dword [gdtptr +2 ],ax，使用的就是ds寄存器
+    shl eax,                4         ;此处代码多余
     add eax,                desc_null
-    mov dword [gdtptr + 2], eax       ;这里是加16位，一字节即1dw
+    mov dword [gdtptr + 2], eax       ;这里是加16位，为什么要在这里加？前面其实定义时是不是就可以决定？？？
 
-    lgdt [gdtptr]
+    lgdt [gdtptr] ;也是以ds作为基地址
 
     ;关中断
     cli
@@ -72,10 +96,25 @@ beign:
 seg32:
     mov ax,       videoSelector
     mov gs,       ax
-    mov edi,      (80 * 11 + 4) * 2 ;屏幕11行，79列
-    mov ah,       0ch               ;0000:黑底 1110：红字
-    mov ah,       'P'
-    mov [gs:edi], ax
+    mov edi,      (80 * 17 +1) * 2 ;屏幕17行
+    mov ah,       0xf4             ;1111:白底 1110：红字
+    mov al,       'H'
+    mov [gs:edi], eax
+    add di,       2
+    mov al,       'E'
+    mov [gs:edi], eax
+    add di,       2
+    mov al,       'L'
+    mov [gs:edi], eax
+    add di,       2
+    mov al,       'L'
+    mov [gs:edi], eax
+    add di,       2
+    mov al,       'O'
+    mov [gs:edi], eax
+    add di,       2
+    mov al,       '!'
+    mov [gs:edi], eax
 
     jmp $
 seg32Len         equ $ - seg32 ;32位代码段长度
