@@ -21,5 +21,8 @@ log: bochsout.txt
 # disable the mouse
 mouse: enabled=0
 
+# 执行到xchg bx,bx指令时会断到bochs中去
+magic_break: enabled=1
+
 # enable key mapping, using US layout as default.
 # keyboard_mapping: enabled=1, map=/usr/share/bochs/keymaps/x11-pc-us.map

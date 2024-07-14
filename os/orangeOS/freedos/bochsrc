@@ -9,3 +9,6 @@ boot: floppy
 log: bochsout.txt
 mouse: enabled=0
 cpu: ips=15000000
+
+# 执行到xchg bx,bx指令时会断到bochs中去
+magic_break: enabled=1
