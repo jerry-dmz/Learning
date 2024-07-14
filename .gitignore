@@ -4,3 +4,5 @@ out/*
 *.img
 *.com
 *.txt
+*.img.lock
+bochsout.txt
