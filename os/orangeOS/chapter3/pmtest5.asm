@@ -1,7 +1,7 @@
 %include	"pm.inc"	
 
 ; *****************
-; 测试保护模式使用调用门
+; 测试ring3通过调用门返回到ring0
 ; *****************
 org 0100h
 	xchg bx, bx
@@ -9,17 +9,14 @@ org 0100h
 
 ; GDT
 	;                            段基址,        段界限 , 属性
-	desc_null:         Descriptor    0,              0, 0   ; 空描述符
+	desc_null: Descriptor    0,              0, 0   ; 空描述符
 	desc_normal: Descriptor    0,         0ffffh, DA_DRW    ; Normal 描述符
 	desc_code32: Descriptor    0, SegCode32Len-1, DA_C+DA_32; 非一致代码段, 32
+	desc_code32Ring3: Descriptor 0, SegCodeRing3Len, DA_C+DA_32+DA_DPL3
 	desc_data:   Descriptor    0,      DataLen-1, DA_DRW    ; Data
+	desc_video:  Descriptor  0B8000h,     0ffffh, DA_DRW + DA_DPL3   ; 显存首地址
 	desc_stack:  Descriptor    0,     stackLength, DA_DRWA+DA_32; Stack, 32 位
-	desc_video:  Descriptor  0B8000h,     0ffffh, DA_DRW    ; 显存首地址
-	desc_dest:	Descriptor 0,code32_destLength-1,DA_C+DA_32 ;非一致性代码段，32
-	; 门
-		; 目标选择子，偏移，DCount, 属性
-		desc_gate: Gate destSelector,0,0,DA_386CGate+DA_DPL0
-	; 门
+	desc_stack3:  Descriptor    0,     stack3Length, DA_DRWA+DA_32+DA_DPL3; Stack-Ring3, 32 位
 	;gdtr
 	GdtLen equ $ - desc_null ; GDT长度
 	GdtPtr dw  GdtLen - 1    ; GDT界限
@@ -27,32 +24,14 @@ org 0100h
 ; GDT
 
 ; GDT选择子
-	normalSelector equ desc_normal	- desc_null
-	code32Selector equ desc_code32	- desc_null
-	dataSelector   equ desc_data		- desc_null
-	stackSelector  equ desc_stack	- desc_null
-	videoSelector  equ desc_video	- desc_null
-	destSelector   equ desc_dest - desc_null
+	normalSelector      equ desc_normal	- desc_null
+	code32Selector      equ desc_code32	- desc_null
+	code32Ring3Selector equ desc_code32Ring3 - desc_null+SA_RPL3
+	dataSelector        equ desc_data		- desc_null
+	stackSelector       equ desc_stack	- desc_null
+	stack3Selector      equ desc_stack3 - desc_null+SA_RPL3
+	videoSelector       equ desc_video	- desc_null
 ; GDT选择子
-
-; 门描述符选择子
-	gate_selector equ desc_gate - desc_null
-; 门描述符选择子
-
-; 反汇编内容及定义的内容
-	; 0x0000000000032340					  0x87	  0xdb													; xchg bx,bx
-	; 0x0000000000032342 					  0xe9    0x7b    0x02											; jmp code16
-	; 0x0000000000032345 <bogus+       0>:    0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00  ; desc_null
-	; 0x000000000003234d <bogus+       8>:    0xff    0xff    0x00    0x00    0x00    0x92    0x00    0x00	; desc_normal
-	; 0x0000000000032355 <bogus+      16>:    0x4f    0x00    0x00    0x00    0x00    0x98    0x40    0x00	; desc_code32
-	; 0x000000000003235d <bogus+      24>:    0xff    0xff    0x00    0x00    0x00    0x98    0x00    0x00  ; desc_code16
-	; 0x0000000000032365 <bogus+      32>:    0x18    0x00    0x00    0x00    0x00    0x92    0x00    0x00  ; desc_data
-	; 0x000000000003236d <bogus+      40>:    0xff    0x01    0x00    0x00    0x00    0x93    0x40    0x00  ; desc_stack
-	; 0x0000000000032375 <bogus+      48>:    0xff    0xff    0x00    0x80    0x0b    0x92    0x00    0x00  ; desc_video
-	; 0x000000000003237d <bogus+      56>:    0x16    0x00    0x00    0x00    0x00    0x98    0x40    0x00  ; desc_dest
-	; 0x0000000000032385 <bogus+      64>:    0x00    0x00    0x38    0x00    0x00    0x8c    0x00    0x00  ; desc_gate
-	; 0x000000000003238d <bogus+      72>:    0x47    0x00    0x00    0x00    0x00    0x00					; gdtr定义
-; 反汇编内容及定义的内容
 
 ; 32位数据段
 	ALIGN 32
@@ -67,13 +46,22 @@ org 0100h
 ; 全局堆栈段
 	ALIGN 32
 	[BITS	32]
-	STACK_SEGMENT:
+	stack:
 		times 512 db 0
 
-	stackLength equ $ - STACK_SEGMENT - 1
+	stackLength equ $ - stack - 1
 ; 全局堆栈段
 
-; 16位代码段
+;Ring3堆栈段
+	ALIGN 32
+	[BITS	32]
+	stack3:
+		times 512 db 0
+
+	stack3Length equ $ - stack3 - 1
+;Ring3堆栈段
+
+; 16位代码段-初始化
 	[BITS	16]
 	code16:
 	mov ax, cs
@@ -92,6 +80,16 @@ org 0100h
 	mov byte [desc_code32 + 4], al
 	mov byte [desc_code32 + 7], ah
 
+	; 初始化32位代码段（ring3）描述符
+	xor eax,                         eax
+	mov ax,                          cs
+	shl eax,                         4
+	add eax,                         code32Ring3
+	mov word [desc_code32Ring3 + 2], ax
+	shr eax,                         16
+	mov byte [desc_code32Ring3 + 4], al
+	mov byte [desc_code32Ring3 + 7], ah
+
 	; 初始化数据段描述符
 	xor eax,                  eax
 	mov ax,                   ds
@@ -106,20 +104,21 @@ org 0100h
 	xor eax,                   eax
 	mov ax,                    ds
 	shl eax,                   4
-	add eax,                   STACK_SEGMENT
+	add eax,                   stack
 	mov word [desc_stack + 2], ax
 	shr eax,                   16
 	mov byte [desc_stack + 4], al
 	mov byte [desc_stack + 7], ah
 
-	xor eax,                eax
-	mov ax,                 cs
-	shl eax,                4
-	add eax,                code32_dest
-	mov word [desc_dest+2], ax
-	shr eax,                16
-	mov byte [desc_dest+4], al
-	mov byte [desc_dest+7], ah
+	; 初始化堆栈段(ring3)描述符
+	xor eax,                    eax
+	mov ax,                     ds
+	shl eax,                    4
+	add eax,                    stack3
+	mov word [desc_stack3 + 2], ax
+	shr eax,                    16
+	mov byte [desc_stack3+ 4],  al
+	mov byte [desc_stack3 + 7], ah
 
 	; 为加载 GDTR 作准备
 	xor eax,                eax
@@ -146,7 +145,7 @@ org 0100h
 
 	; 真正进入保护模式
 	jmp dword code32Selector:0 ; 执行这一句会把 code32Selector 装入 cs, 并跳转到 Code32Selector:0  处
-; 16位代码段
+; 16位代码段-初始化
 
 ; 32位代码段-ring0
 	[BITS	32]
@@ -180,21 +179,26 @@ org 0100h
 			jmp   .work
 		.done:
 			xchg bx, bx
-			call gate_selector:0
-			jmp  $
-
+			push stack3Selector
+			push stack3Length
+			push code32Ring3Selector
+			push 0
+			retf
 	SegCode32Len equ $ - code32
 ; 32位代码段-ring0
 
-; 32位代码段-调用门
-	code32_dest:
+; 32位代码段-ring3
+	ALIGN 32
+	[BITS	32]
+	code32Ring3:
 		xchg bx,       bx
 		mov  ax,       videoSelector
 		mov  gs,       ax
-		mov  edi,      (80*12+0)*2
+		mov  edi,      (80 * 14 + 0) * 2
 		mov  ah,       0Ch
-		mov  al,       'C'
+		mov  al,       '3'
 		mov  [gs:edi], ax
-		retf
-	code32_destLength equ $-code32_dest
-; 32位代码段-调用门
+
+		jmp $
+	SegCodeRing3Len equ $ - code32Ring3
+; 32 位代码段-ring3

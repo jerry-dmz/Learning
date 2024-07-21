@@ -1,5 +1,7 @@
 %include	"pm.inc"	
-
+; *****************
+; 测试从实模式进入到保护模式，又从保护模式返回实模式
+; *****************
 org 0100h
 	xchg bx, bx
 	jmp  begin
@@ -38,6 +40,7 @@ SPValueInRealMode dw  0
 ; 字符串
 message:          db  "In Protect Mode now. ^-^", 0 ; 在保护模式中显示
 messgeOffset      equ message - DATA_SEGMENT
+DataLen           equ $-DATA_SEGMENT
 ; END of [SECTION .data1]
 
 
