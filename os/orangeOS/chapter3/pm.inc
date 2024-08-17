@@ -3,6 +3,8 @@
 ; G-D/B-L-AVL 4位
 DA_32 equ 4000h ;0100(G-D/B-L-AVL) 0000 0000(P-DPL-S) 0000(type)
 
+DA_321 equ 4010
+
 DA_DPL0 EQU	  00h ; DPL = 0
 DA_DPL1 EQU	  20h ; DPL = 1
 DA_DPL2 EQU	  40h ; DPL = 2

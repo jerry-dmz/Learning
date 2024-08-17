@@ -17,6 +17,11 @@ org 0100h
 	desc_video:  Descriptor  0B8000h,     0ffffh, DA_DRW + DA_DPL3   ; 显存首地址
 	desc_stack:  Descriptor    0,     stackLength, DA_DRWA+DA_32; Stack, 32 位
 	desc_stack3:  Descriptor    0,     stack3Length, DA_DRWA+DA_32+DA_DPL3; Stack-Ring3, 32 位
+	desc_dest:	Descriptor 0,code32_destLength-1,DA_C+DA_321 ;非一致性代码段，32
+	; 门
+		; 目标选择子，偏移，DCount, 属性
+		desc_gate: Gate destSelector,0,0,DA_386CGate+DA_DPL3
+	; 门
 	;gdtr
 	GdtLen equ $ - desc_null ; GDT长度
 	GdtPtr dw  GdtLen - 1    ; GDT界限
@@ -31,7 +36,12 @@ org 0100h
 	stackSelector       equ desc_stack	- desc_null
 	stack3Selector      equ desc_stack3 - desc_null+SA_RPL3
 	videoSelector       equ desc_video	- desc_null
+	destSelector        equ desc_dest - desc_null
 ; GDT选择子
+
+; 门描述符选择子
+	gate_selector equ desc_gate - desc_null
+; 门描述符选择子
 
 ; 32位数据段
 	ALIGN 32
@@ -89,6 +99,16 @@ org 0100h
 	shr eax,                         16
 	mov byte [desc_code32Ring3 + 4], al
 	mov byte [desc_code32Ring3 + 7], ah
+
+	; 初始化32位调用门描述符
+	xor eax,                  eax
+	mov ax,                   cs
+	shl eax,                  4
+	add eax,                  code32_dest
+	mov word [desc_dest + 2], ax
+	shr eax,                  16
+	mov byte [desc_dest + 4], al
+	mov byte [desc_dest + 7], ah
 
 	; 初始化数据段描述符
 	xor eax,                  eax
@@ -198,7 +218,20 @@ org 0100h
 		mov  ah,       0Ch
 		mov  al,       '3'
 		mov  [gs:edi], ax
-
-		jmp $
+		call gate_selector:0
+		jmp  $
 	SegCodeRing3Len equ $ - code32Ring3
 ; 32 位代码段-ring3
+
+; 32位代码段-调用门
+	code32_dest:
+		xchg bx,       bx
+		mov  ax,       videoSelector
+		mov  gs,       ax
+		mov  edi,      (80*12+0)*2
+		mov  ah,       0Ch
+		mov  al,       'C'
+		mov  [gs:edi], ax
+		retf
+	code32_destLength equ $-code32_dest
+; 32位代码段-调用门
