@@ -2,6 +2,8 @@
 
 ; *****************
 ; 测试ring3通过调用门返回到ring0
+; 此文件测试的低特权级到高特权级的转换，其实没有怎么弄明白，还需要有个专题进行总结，还需要更深入的理论学习。
+; TODO:
 ; *****************
 org 0100h
 	xchg bx, bx
@@ -14,10 +16,11 @@ org 0100h
 	desc_code32: Descriptor    0, SegCode32Len-1, DA_C+DA_32; 非一致代码段, 32
 	desc_code32Ring3: Descriptor 0, SegCodeRing3Len, DA_C+DA_32+DA_DPL3
 	desc_data:   Descriptor    0,      DataLen-1, DA_DRW    ; Data
-	desc_video:  Descriptor  0B8000h,     0ffffh, DA_DRW + DA_DPL3   ; 显存首地址
+	desc_video:  Descriptor  0B8000h,     0ffffh, DA_DRW +DA_DPL3  ; 显存首地址
 	desc_stack:  Descriptor    0,     stackLength, DA_DRWA+DA_32; Stack, 32 位
 	desc_stack3:  Descriptor    0,     stack3Length, DA_DRWA+DA_32+DA_DPL3; Stack-Ring3, 32 位
-	desc_dest:	Descriptor 0,code32_destLength-1,DA_C+DA_321 ;非一致性代码段，32
+	desc_dest:	Descriptor 0,code32_destLength-1,DA_C+DA_32 ;非一致性代码段，32
+	desc_tss: Descriptor 0,tssLen-1,DA_386TSS
 	; 门
 		; 目标选择子，偏移，DCount, 属性
 		desc_gate: Gate destSelector,0,0,DA_386CGate+DA_DPL3
@@ -36,7 +39,8 @@ org 0100h
 	stackSelector       equ desc_stack	- desc_null
 	stack3Selector      equ desc_stack3 - desc_null+SA_RPL3
 	videoSelector       equ desc_video	- desc_null
-	destSelector        equ desc_dest - desc_null
+	destSelector        equ desc_dest - desc_null+SA_RPL3
+	tssSelector         equ desc_tss - desc_null
 ; GDT选择子
 
 ; 门描述符选择子
@@ -70,6 +74,41 @@ org 0100h
 
 	stack3Length equ $ - stack3 - 1
 ;Ring3堆栈段
+
+;tss
+align 32
+[BITS 32]
+tss:
+	dd 0
+	dd stackLength
+	dd stackSelector
+	dd 0             ; 1 级堆栈
+	dd 0             ; 
+	dd 0             ; 2 级堆栈
+	dd 0             ; 
+	dd 0             ; CR3
+	dd 0             ; EIP
+	dd 0             ; EFLAGS
+	dd 0             ; EAX
+	dd 0             ; ECX
+	dd 0             ; EDX
+	dd 0             ; EBX
+	dd 0             ; ESP
+	dd 0             ; EBP
+	dd 0             ; ESI
+	dd 0             ; EDI
+	dd 0             ; ES
+	dd 0             ; CS
+	dd 0             ; SS
+	dd 0             ; DS
+	dd 0             ; FS
+	dd 0             ; GS
+	dd 0             ; LDT
+	dw 0             ; 调试陷阱标志
+	dw $ - tss + 2   ; I/O位图基址
+	db 0ffh          ; I/O位图结束标志
+tssLen equ $ - tss
+;
 
 ; 16位代码段-初始化
 	[BITS	16]
@@ -140,6 +179,17 @@ org 0100h
 	mov byte [desc_stack3+ 4],  al
 	mov byte [desc_stack3 + 7], ah
 
+	; 初始化tss描述符
+	xor eax,                 eax
+	mov ax,                  ds
+	shl eax,                 4
+	add eax,                 tss
+	mov word [desc_tss + 2], ax
+	shr eax,                 16
+	mov byte [desc_tss + 4], al
+	mov byte [desc_tss + 7], ah
+
+
 	; 为加载 GDTR 作准备
 	xor eax,                eax
 	mov ax,                 ds
@@ -199,6 +249,11 @@ org 0100h
 			jmp   .work
 		.done:
 			xchg bx, bx
+
+			;加载tss
+			mov ax, tssSelector
+			ltr ax
+
 			push stack3Selector
 			push stack3Length
 			push code32Ring3Selector
@@ -219,6 +274,8 @@ org 0100h
 		mov  al,       '3'
 		mov  [gs:edi], ax
 		call gate_selector:0
+		;TODO:这个通过门从低特权级返回高特权级，没有定义tss之前会报错。
+		;但是为什么会报错，其实还是没怎么搞懂，这一点值得探究
 		jmp  $
 	SegCodeRing3Len equ $ - code32Ring3
 ; 32 位代码段-ring3
