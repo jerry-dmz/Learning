@@ -3,12 +3,12 @@
 ; G-D/B-L-AVL 4位
 DA_32 equ 4000h ;0100(G-D/B-L-AVL) 0000 0000(P-DPL-S) 0000(type)
 
-DA_321 equ 4010
+DA_LIMIT_4K EQU	8000h ; 段界限粒度为 4K 字节
 
-DA_DPL0 EQU	  00h ; DPL = 0
-DA_DPL1 EQU	  20h ; DPL = 1
-DA_DPL2 EQU	  40h ; DPL = 2
-DA_DPL3 EQU	  60h ; DPL = 3
+DA_DPL0     EQU	  00h ; DPL = 0
+DA_DPL1     EQU	  20h ; DPL = 1
+DA_DPL2     EQU	  40h ; DPL = 2
+DA_DPL3     EQU	  60h ; DPL = 3
 
 ;P-DPL-S 4位 type 4位
 
@@ -41,6 +41,12 @@ SA_RPL3     EQU	3     ; ┛
 SA_TIG      EQU	0     ; ┓TI
 SA_TIL      EQU	4     ; ┛
 
+PG_P   equ 1                                 ; 页存在属性位
+PG_RWR equ 0                                 ; R/W属性位值，读/写
+PG_RWW equ 2                                 ; R/W属性位值，读/写/执行
+PG_USS equ 0                                 ; U/S属性值，系统级
+PG_USU equ 4                                 ; U/S属性位值，用户级
+
 
 ;由于历史问题，描述符结构有点乱，段基址（32位）、段界限（20）都被拆开了在加上属
 ;性占据的12位，一共8字节64位
@@ -65,11 +71,11 @@ SA_TIL      EQU	4     ; ┛
 ; 输出：
 ; 待研究
 %macro Descriptor 3
-dw %2 & 0FFFFh                       ;段界限1（16位） 取段界限的低16位
-dw %1 & 0FFFFh                       ;段基址1  取基址的低16位   8000
-db (%1 >> 16) & 0FFh                 ;段基址2 取基址的中8位  0B
-dw ((%2 >> 8) & 0F00h)|(%3 & 0F0FFh) ;属性1 + 段界限2 + 属性2
-db (%1 >> 24) & 0FFh                 ;段基址3 取基址的高8位 00
+dw         %2 & 0FFFFh                       ;段界限1（16位） 取段界限的低16位
+dw         %1 & 0FFFFh                       ;段基址1  取基址的低16位   8000
+db         (%1 >> 16) & 0FFh                 ;段基址2 取基址的中8位  0B
+dw         ((%2 >> 8) & 0F00h)|(%3 & 0F0FFh) ;属性1 + 段界限2 + 属性2
+db         (%1 >> 24) & 0FFh                 ;段基址3 取基址的高8位 00
 %endmacro   ; 供8字节
 
 ;

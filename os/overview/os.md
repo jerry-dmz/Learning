@@ -4039,6 +4039,65 @@ push 0				; 往堆栈中push要返回的eip
 retf				; 返回
 ```
 
+### 页式存储
+
+未打开分页机制时，线性地址 = 物理地址，逻辑地址通过分段机制直接转换为物理地址。
+
+打开分页机制后，分段机制将逻辑地址转换为线性地址，线性地址在通过分页机制转换为物理地址。
+
+<img src="./os.assets/image-20240818114151866.png" alt="image-20240818114151866" style="zoom:50%;" />
+
+#### PDE项结构
+
+**Page Dir Entry**
+
+<img src="./os.assets/image-20240901221014447.png" alt="image-20240901221014447" style="zoom:50%;" />
+
+#### PTE结构
+
+**Page Table Entry**
+
+<img src="./os.assets/image-20240901221400591.png" alt="image-20240901221400591" style="zoom:50%;" />
+
+#### 表项解释
+
+* **P(present)**,所指页表/页是否在物理内存
+* **R/W**，读写权限，与位**U/S**和**cr0的WP位**相互作用
+* **U/S(User/Supervisor)**,页或一组页的特权级
+* **PWT(Policy Write-through)**,控制单个页或者一组页的缓冲策略，和cr0的cd一起作用
+* **PCD(Policy Cache Disabled)**,控制单个页或一组页的缓冲策略。
+* **A(Accessed)**,此位往往在页或页表刚刚被加载到物理内存时被内容管理程序清空，处理器会在**第一次**访问此页或页面时设置此位。**处理器不会自动清除此位，只有软件能清除它。**
+* **D(Dirty)**，页或页表是否被写入，和A位类似，都是被内存管理程序用来管理页和页表（从内存换入或换出）。
+* **PS(Page SIze)**,页大小
+* **PAT(Page Attribute Table)**,Pentium III以后的CPU开始支持此位。
+* **G**,指示全局页，如果此位被设置，且CR4中PGE被置位，那么此页的页表或页目录条目在TLB中无效。
+
+处理器会将最近常用的页目录项和页表项保存在（Translation Lookaside Buffer）的缓冲区中。当页目录或页表项被更改时，操作系统应该马上使TLB中对应的条目无效。
+
+当cr3被加载时，所有TLB都会自动无效，除非页或页表条目的G位被设置。
+
+#### CR3
+
+Page-Directory Base Register，高20位是页目录表首地址的高20位，页目录表首地址的低12位会是0，因此其是4k对齐的。
+
+#### 获取内存描述信息
+
+int 15h号中断
+
+<img src="./os.assets/image-20240907233420573.png" alt="image-20240907233420573" style="zoom:50%;" />
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
