@@ -10,7 +10,7 @@ romimage: file=D:\\softwares\\Bochs-2.7\\BIOS-bochs-latest
 vgaromimage: file=D:\\softwares\\Bochs-2.7\\VGABIOS-lgpl-latest
 
 # what disk images will be used 
-floppya: 1_44=d.img, status=inserted
+floppya: 1_44=a.img, status=inserted
 
 # choose the boot disk.
 boot: floppy
@@ -23,3 +23,6 @@ mouse: enabled=0
 
 # enable key mapping, using US layout as default.
 # keyboard_mapping: enabled=1, map=/usr/share/bochs/keymaps/x11-pc-us.map
+
+# 执行到xchg bx,bx指令时会断到bochs中去
+magic_break: enabled=1
