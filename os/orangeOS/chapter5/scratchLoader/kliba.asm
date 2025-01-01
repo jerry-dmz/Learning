@@ -16,6 +16,14 @@ disp_str:
     jz   .2
     cmp  al,  0ah ;是否是回车
     jnz  .3
+    ; gcc高版本对ebx使用可能不同。在gcc11.4.0中，ebx被作为字符串常量池的索引
+    ; 比如 disp_str("ddss"）被翻译成:
+    ; sub  esp 0x0c
+    ; lea  eax, [ebx-8192]
+    ; push eax
+    ; call .112
+    ; add  esp 0x10
+    push ebx
     push eax
     mov  eax, edi
     mov  bl,  160
@@ -27,6 +35,7 @@ disp_str:
     mul bl
     mov edi, eax
     pop eax
+    pop ebx
     jmp .1
 .3:
     mov [gs:edi], ax

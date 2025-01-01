@@ -1,10 +1,12 @@
 
 ; 这里org注释掉了会报错，还没搞懂是什么原因TODO:
+; 这是因为这段程序会被加载到BaseOfLoader: OffsetOfLoader,而offset为0100h，而且这个也是作为栈地的
 org 0100h
 
 	jmp LABEL_START ; Start
 
 ; 下面是 FAT12 磁盘的头, 之所以包含它是因为下面用到了磁盘的一些信息
+; 因为loader中无法访问boot中的文件系统元数据，除非写死。
 %include	"fat12hdr.inc"
 %include	"load.inc"
 %include	"pm.inc"
