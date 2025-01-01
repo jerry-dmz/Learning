@@ -7,9 +7,9 @@ org 0100h
 
 ; 下面是 FAT12 磁盘的头, 之所以包含它是因为下面用到了磁盘的一些信息
 ; 因为loader中无法访问boot中的文件系统元数据，除非写死。
-%include	"fat12hdr.inc"
-%include	"load.inc"
-%include	"pm.inc"
+%include	"boot/include/fat12hdr.inc"
+%include	"boot/include/load.inc"
+%include	"boot/include/pm.inc"
 
 
 ; GDT ------------------------------------------------------------------------------------------------------------------------------------------------------------

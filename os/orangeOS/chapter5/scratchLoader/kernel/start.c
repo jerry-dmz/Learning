@@ -1,6 +1,6 @@
-#include "types.h"
-#include "const.h"
-#include "protect.h"
+#include "./include/types.h"
+#include "./include/const.h"
+#include "./include/protect.h"
 
 public
 void *memcpy(void *pDst, void *pSrc, int iSize);
@@ -21,12 +21,12 @@ void cstart()
     asm("xchg %bx,%bx");
     /**
      * 这里用到换行会报错，还没搞懂原因TODO:
-     * 
-     * 
+     *
+     *
      * 解答：disp_str函数中有\n时会用到bl寄存器，没有对其入栈处理，导致修改了ebx，
-     * 
+     *
      * 而disp_str被翻译成了：
-     * 
+     *
      * gcc高版本对ebx使用可能不同。在gcc11.4.0中，ebx被作为字符串常量池的索引
      * 比如 disp_str("ddss"）被翻译成:
      * sub  esp 0x0c
@@ -34,7 +34,7 @@ void cstart()
      * push eax
      * call .112
      * add  esp 0x10
-     * 
+     *
      * 这就导致后续的调用全都乱了，所以出现了非法的描述符
      */
     disp_str("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n------cstart begins------\n\n");
