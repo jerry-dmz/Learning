@@ -1,5 +1,6 @@
 
-; org 0100h
+; 这里org注释掉了会报错，还没搞懂是什么原因TODO:
+org 0100h
 
 	jmp LABEL_START ; Start
 
@@ -154,8 +155,8 @@ LABEL_GOON_LOADING_FILE:
 	jmp  LABEL_GOON_LOADING_FILE
 LABEL_FILE_LOADED:
 
-	call KillMotor ; 关闭软驱马达
-
+	call KillMotor       ; 关闭软驱马达
+	xchg bx, bx
 	mov  dh, 1           ; "Ready."
 	call DispStrRealMode ; 显示字符串
 	
@@ -355,11 +356,7 @@ LABEL_PM_START:
 	call DispMemInfo
 	call SetupPaging
 	xchg bx, bx
-
-	mov ah,                       0Fh ; 0000: 黑底    1111: 白字
-	mov al,                       'P'
-	mov [gs:((80 * 0 + 39) * 2)], ax  ; 屏幕第 0 行, 第 39 列。
-
+	
 	call InitKernel
 
 	xchg bx, bx

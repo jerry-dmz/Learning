@@ -8,7 +8,7 @@ void *memcpy(void *pDst, void *pSrc, int iSize);
 public
 void disp_str(char *pszinfo);
 
-public 
+public
 u8 gdt_ptr[6]; /**1~15:Limit 16~47:Base */
 
 public
@@ -17,7 +17,13 @@ DESCRIPTOR gdt[GDT_SIZE];
 public
 void cstart()
 {
-    disp_str("\n\n\n\n\n\n\n-----\"cstart\" begins------\n");
+
+    asm("xchg %bx,%bx");
+    /**
+     * 这里用到换行会报错，还没搞懂原因TODO:
+     */
+    // disp_str("\n\n\n\n\n\n\n-----\"cstart\" begins------\n");
+    disp_str("------cstart begins");
     /**
      * 将gdt复制到新的位置
      */
@@ -32,4 +38,5 @@ void cstart()
     u32 *p_gdt_base = (u32 *)(&gdt_ptr[2]);
     *p_gdt_limit = GDT_SIZE * sizeof(DESCRIPTOR) - 1;
     *p_gdt_base = (u32)&gdt;
+    disp_str("cstart ends");
 }
